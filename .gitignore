@@ -31,5 +31,4 @@ data/
 
 # Editor/IDE
 .idea/
-workspace.xml
-.vscode/
+# .vscode/

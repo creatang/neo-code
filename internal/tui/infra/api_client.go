@@ -4,7 +4,7 @@ import (
 	"context"
 	"strings"
 
-	"go-llm-demo/configs"
+	"go-llm-demo/config"
 	"go-llm-demo/internal/server/domain"
 	"go-llm-demo/internal/server/infra/provider"
 	"go-llm-demo/internal/server/infra/repository"
@@ -35,11 +35,11 @@ type MemoryStats struct {
 type localChatClient struct {
 	roleSvc   domain.RoleService
 	memorySvc domain.MemoryService
-	config    *configs.AppConfiguration
+	config    *config.AppConfiguration
 }
 
 func NewLocalChatClient() (ChatClient, error) {
-	cfg := configs.GlobalAppConfig
+	cfg := config.GlobalAppConfig
 	if cfg == nil {
 		return nil, context.Canceled
 	}
@@ -104,9 +104,12 @@ func (c *localChatClient) ClearSessionMemory(ctx context.Context) error {
 }
 
 func (c *localChatClient) ListModels() []string {
-	return provider.SupportedModelsForConfig(c.config)
+	return provider.SupportedModels()
 }
 
 func (c *localChatClient) DefaultModel() string {
-	return provider.DefaultModelForConfig(c.config)
+	if c.config != nil && strings.TrimSpace(c.config.AI.Model) != "" {
+		return strings.TrimSpace(c.config.AI.Model)
+	}
+	return provider.DefaultModel()
 }

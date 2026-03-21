@@ -3,19 +3,19 @@ package main
 import (
 	"fmt"
 
-	"go-llm-demo/configs"
+	"go-llm-demo/config"
 	"go-llm-demo/internal/server/infra/provider"
 	"go-llm-demo/internal/server/infra/repository"
 	"go-llm-demo/internal/server/service"
 )
 
 func main() {
-	if err := configs.LoadAppConfig("config.yaml"); err != nil {
+	if err := config.LoadAppConfig("config.yaml"); err != nil {
 		fmt.Printf("加载配置失败：%v\n", err)
 		return
 	}
 
-	cfg := configs.GlobalAppConfig
+	cfg := config.GlobalAppConfig
 	memoryRepo := repository.NewFileMemoryStore(cfg.Memory.StoragePath, cfg.Memory.MaxItems)
 	sessionRepo := repository.NewSessionMemoryStore(cfg.Memory.MaxItems)
 	memorySvc := service.NewMemoryService(

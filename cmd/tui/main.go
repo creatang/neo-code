@@ -6,24 +6,20 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"runtime"
 	"strings"
-	"syscall"
 
-	"go-llm-demo/configs"
+	tea "github.com/charmbracelet/bubbletea"
+	"go-llm-demo/config"
 	"go-llm-demo/internal/server/infra/provider"
 	"go-llm-demo/internal/tui/core"
 	"go-llm-demo/internal/tui/infra"
-
-	tea "github.com/charmbracelet/bubbletea"
 )
 
 func main() {
-	setUTF8Mode()
-	loadDotEnv(".env")
+	const configPath = "config.yaml"
 
 	scanner := bufio.NewScanner(os.Stdin)
-	ready, err := ensureAPIKeyInteractive(context.Background(), scanner, "config.yaml")
+	ready, err := ensureAPIKeyInteractive(context.Background(), scanner, configPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "初始化配置失败: %v\n", err)
 		os.Exit(1)
@@ -33,30 +29,20 @@ func main() {
 		return
 	}
 
-	if err := configs.LoadAppConfig("config.yaml"); err != nil {
+	if err := config.LoadAppConfig(configPath); err != nil {
 		fmt.Fprintf(os.Stderr, "加载配置失败: %v\n", err)
 		os.Exit(1)
 	}
 
-	persona, personaPath, err := configs.LoadPersonaPrompt(configs.GlobalAppConfig.Persona.FilePath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "警告: 人设加载失败: %v\n", err)
-	} else if personaPath != "" && strings.TrimSpace(configs.GlobalAppConfig.Persona.FilePath) != personaPath {
-		fmt.Fprintf(os.Stderr, "提示: 人设已从 %s 回退加载\n", personaPath)
-	}
-	historyTurns := configs.GlobalAppConfig.History.ShortTermTurns
-
+	persona := loadPersonaPrompt(personaFilePath())
 	client, err := infra.NewLocalChatClient()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "初始化失败: %v\n", err)
 		os.Exit(1)
 	}
 
-	model := core.NewModel(client, persona, historyTurns, "config.yaml")
-	p := tea.NewProgram(model,
-		tea.WithAltScreen(),
-		tea.WithMouseCellMotion(),
-	)
+	model := core.NewModel(client, persona)
+	p := tea.NewProgram(model, tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "运行失败: %v\n", err)
 		os.Exit(1)
@@ -64,48 +50,40 @@ func main() {
 }
 
 func ensureAPIKeyInteractive(ctx context.Context, scanner *bufio.Scanner, configPath string) (bool, error) {
-	cfg, created, err := configs.EnsureConfigFile(configPath)
+	cfg, created, err := config.EnsureConfigFile(configPath)
 	if err != nil {
 		return false, err
 	}
 	if created {
-		fmt.Printf("已创建 %s\n", configPath)
+		fmt.Printf("Created %s with default settings.\n", configPath)
 	}
 
 	for {
-		if cfg.RuntimeAPIKey() == "" {
-			envName := cfg.APIKeyEnvVarName()
-			fmt.Printf("未检测到环境变量 %s。可使用 /apikey <env_name>、/provider <name> 切换配置，或先设置该环境变量后再 /retry。\n", envName)
-			fmt.Printf("Windows 示例: setx %s \"your-api-key\"\n", envName)
-			result, handleErr := handleSetupDecision(scanner, cfg, false, configPath)
-			if handleErr != nil {
-				return false, handleErr
+		apiKey := strings.TrimSpace(cfg.AI.APIKey)
+		if apiKey == "" {
+			fmt.Println("No API key configured. Enter your API key, or type /exit to quit.")
+			input, ok, inputErr := readInteractiveLine(scanner, "api_key> ")
+			if inputErr != nil {
+				return false, inputErr
 			}
-			if result == setupExit {
+			if !ok {
 				return false, nil
 			}
-			continue
+			cfg.AI.APIKey = input
 		}
 
 		if err := provider.ValidateChatAPIKey(ctx, cfg); err == nil {
-			if saveErr := configs.WriteAppConfig(configPath, cfg); saveErr != nil {
+			if saveErr := config.WriteAppConfig(configPath, cfg); saveErr != nil {
 				return false, saveErr
 			}
-			configs.GlobalAppConfig = cfg
-			fmt.Println("API key 验证通过。")
+			fmt.Println("API key validated and saved.")
 			return true, nil
 		} else if errors.Is(err, provider.ErrInvalidAPIKey) {
-			fmt.Printf("环境变量 %s 中的 API key 无效: %v\n", cfg.APIKeyEnvVarName(), err)
-			result, handleErr := handleSetupDecision(scanner, cfg, false, configPath)
-			if handleErr != nil {
-				return false, handleErr
-			}
-			if result == setupExit {
-				return false, nil
-			}
+			fmt.Printf("API key is invalid: %v\n", err)
+			cfg.AI.APIKey = ""
 			continue
 		} else if errors.Is(err, provider.ErrAPIKeyValidationSoft) {
-			fmt.Printf("无法确认环境变量 %s 中的 API key 有效性: %v\n", cfg.APIKeyEnvVarName(), err)
+			fmt.Printf("Unable to confirm API key validity: %v\n", err)
 			result, handleErr := handleSetupDecision(scanner, cfg, true, configPath)
 			if handleErr != nil {
 				return false, handleErr
@@ -114,12 +92,12 @@ func ensureAPIKeyInteractive(ctx context.Context, scanner *bufio.Scanner, config
 				return false, nil
 			}
 			if result == setupContinue {
-				configs.GlobalAppConfig = cfg
+				config.GlobalAppConfig = cfg
 				return true, nil
 			}
 			continue
 		} else {
-			fmt.Printf("模型验证失败: %v\n", err)
+			fmt.Printf("Model validation failed: %v\n", err)
 			result, handleErr := handleSetupDecision(scanner, cfg, false, configPath)
 			if handleErr != nil {
 				return false, handleErr
@@ -128,7 +106,7 @@ func ensureAPIKeyInteractive(ctx context.Context, scanner *bufio.Scanner, config
 				return false, nil
 			}
 			if result == setupContinue {
-				configs.GlobalAppConfig = cfg
+				config.GlobalAppConfig = cfg
 				return true, nil
 			}
 		}
@@ -143,11 +121,11 @@ const (
 	setupExit
 )
 
-func handleSetupDecision(scanner *bufio.Scanner, cfg *configs.AppConfiguration, allowContinue bool, configPath string) (setupDecision, error) {
+func handleSetupDecision(scanner *bufio.Scanner, cfg *config.AppConfiguration, allowContinue bool, configPath string) (setupDecision, error) {
 	for {
-		prompt := "选择 /retry, /apikey <env_name>, /provider <name>, /models, /switch <model>, 或 /exit > "
+		prompt := "Choose /retry, /models, /switch <model>, or /exit > "
 		if allowContinue {
-			prompt = "选择 /retry, /continue, /apikey <env_name>, /provider <name>, /models, /switch <model>, 或 /exit > "
+			prompt = "Choose /retry, /continue, /models, /switch <model>, or /exit > "
 		}
 		decision, ok, inputErr := readInteractiveLine(scanner, prompt)
 		if inputErr != nil {
@@ -165,81 +143,43 @@ func handleSetupDecision(scanner *bufio.Scanner, cfg *configs.AppConfiguration, 
 		switch strings.ToLower(fields[0]) {
 		case "/retry":
 			return setupRetry, nil
-		case "/apikey":
-			if len(fields) < 2 {
-				fmt.Println("用法: /apikey <env_name>")
-				continue
-			}
-			applyAPIKeyEnvName(cfg, fields[1])
-			fmt.Printf("已切换 API Key 环境变量名为: %s\n", cfg.APIKeyEnvVarName())
-			return setupRetry, nil
 		case "/continue":
 			if !allowContinue {
-				fmt.Println("/continue 仅在网络或服务问题导致无法确认时可用。")
+				fmt.Println("/continue is only available when validation cannot be confirmed because of network or service issues.")
 				continue
 			}
-			if saveErr := configs.WriteAppConfig(configPath, cfg); saveErr != nil {
+			if saveErr := config.WriteAppConfig(configPath, cfg); saveErr != nil {
 				return setupExit, saveErr
 			}
-			fmt.Println("继续启动，使用当前 API key 和模型。")
+			fmt.Println("Continuing startup with the current API key and model.")
 			return setupContinue, nil
 		case "/models":
-			printAvailableModels(cfg)
-		case "/provider":
-			if len(fields) < 2 {
-				fmt.Println("用法: /provider <name>")
-				printSupportedProviders()
-				continue
-			}
-			providerName, ok := provider.NormalizeProviderName(fields[1])
-			if !ok {
-				fmt.Printf("不支持的提供商 %q\n", fields[1])
-				printSupportedProviders()
-				continue
-			}
-			cfg.AI.Provider = providerName
-			if provider.ProviderSupportsModelCatalog(providerName) && !provider.IsSupportedModelForConfig(cfg, cfg.AI.Model) {
-				cfg.AI.Model = provider.DefaultModelForConfig(cfg)
-			}
-			fmt.Printf("已切换到提供商: %s\n", providerName)
-			if provider.ProviderSupportsModelCatalog(providerName) {
-				fmt.Printf("当前模型: %s\n", cfg.AI.Model)
-			} else {
-				fmt.Printf("当前提供商不提供内置模型列表，请确认 ai.model，或使用 /switch <model> 设置。当前模型: %s\n", cfg.AI.Model)
-			}
-			return setupRetry, nil
+			printAvailableModels()
 		case "/switch":
 			if len(fields) < 2 {
-				fmt.Println("用法: /switch <model>")
-				printAvailableModels(cfg)
+				fmt.Println("Usage: /switch <model>")
+				printAvailableModels()
 				continue
 			}
-			target := strings.Join(fields[1:], " ")
-			if provider.ProviderSupportsModelCatalog(cfg.AI.Provider) && !provider.IsSupportedModelForConfig(cfg, target) {
-				fmt.Printf("模型 %q 不受支持\n", target)
-				printAvailableModels(cfg)
+			target := fields[1]
+			if !provider.IsSupportedModel(target) {
+				fmt.Printf("Model %q is not supported\n", target)
+				printAvailableModels()
 				continue
 			}
 			cfg.AI.Model = target
-			fmt.Printf("已切换到模型: %s\n", target)
+			fmt.Printf("Switched startup validation model to %s\n", target)
 			return setupRetry, nil
 		case "/exit":
 			return setupExit, nil
 		default:
 			if allowContinue {
-				fmt.Println("请输入 /retry, /continue, /apikey <env_name>, /provider <name>, /models, /switch <model>, 或 /exit。")
+				fmt.Println("Please enter /retry, /continue, /models, /switch <model>, or /exit.")
 			} else {
-				fmt.Println("请输入 /retry, /apikey <env_name>, /provider <name>, /models, /switch <model>, 或 /exit。")
+				fmt.Println("Please enter /retry, /models, /switch <model>, or /exit.")
 			}
 		}
 	}
-}
-
-func applyAPIKeyEnvName(cfg *configs.AppConfiguration, envName string) {
-	if cfg == nil {
-		return
-	}
-	cfg.AI.APIKey = strings.TrimSpace(envName)
 }
 
 func readInteractiveLine(scanner *bufio.Scanner, prompt string) (string, bool, error) {
@@ -253,7 +193,7 @@ func readInteractiveLine(scanner *bufio.Scanner, prompt string) (string, bool, e
 		}
 		input := strings.TrimSpace(scanner.Text())
 		if input == "" {
-			fmt.Println("输入不能为空。")
+			fmt.Println("Input cannot be empty.")
 			continue
 		}
 		if input == "/exit" {
@@ -263,73 +203,27 @@ func readInteractiveLine(scanner *bufio.Scanner, prompt string) (string, bool, e
 	}
 }
 
-func printAvailableModels(cfg *configs.AppConfiguration) {
-	providerName := provider.CurrentProvider()
-	if cfg != nil {
-		providerName = cfg.AI.Provider
-	}
-	if !provider.ProviderSupportsModelCatalog(providerName) {
-		fmt.Printf("当前提供商 %s 不提供内置模型列表，请使用 /switch <model> 手动设置模型。\n", providerName)
-		return
-	}
-	fmt.Println("可用模型:")
-	for _, model := range provider.SupportedModelsForConfig(cfg) {
+func printAvailableModels() {
+	fmt.Println("Available models:")
+	for _, model := range provider.SupportedModels() {
 		fmt.Printf("  %s\n", model)
 	}
 }
 
-func printSupportedProviders() {
-	fmt.Println("可用提供商:")
-	for _, name := range provider.SupportedProviders() {
-		fmt.Printf("  %s\n", name)
+func loadPersonaPrompt(path string) string {
+	if strings.TrimSpace(path) == "" {
+		return ""
 	}
-}
-
-func loadDotEnv(path string) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return err
+		return ""
 	}
-
-	lines := strings.Split(string(data), "\n")
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-
-		key, value, found := strings.Cut(line, "=")
-		if !found {
-			continue
-		}
-
-		key = strings.TrimSpace(key)
-		value = strings.TrimSpace(value)
-		if key == "" || os.Getenv(key) != "" {
-			continue
-		}
-
-		value = strings.Trim(value, `"'`)
-		os.Setenv(key, value)
-	}
-
-	return nil
+	return strings.TrimSpace(string(data))
 }
 
-func setUTF8Mode() {
-	if runtime.GOOS == "windows" {
-		setWindowsUTF8()
+func personaFilePath() string {
+	if config.GlobalAppConfig != nil && strings.TrimSpace(config.GlobalAppConfig.Persona.FilePath) != "" {
+		return strings.TrimSpace(config.GlobalAppConfig.Persona.FilePath)
 	}
-}
-
-func setWindowsUTF8() {
-	kernel32 := syscall.NewLazyDLL("kernel32.dll")
-	setConsoleOutputCP := kernel32.NewProc("SetConsoleOutputCP")
-	setConsoleCP := kernel32.NewProc("SetConsoleCP")
-
-	setConsoleOutputCP.Call(uintptr(65001))
-	setConsoleCP.Call(uintptr(65001))
+	return "./persona.txt"
 }

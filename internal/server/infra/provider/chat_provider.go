@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"go-llm-demo/configs"
+	"go-llm-demo/config"
 	"go-llm-demo/internal/server/domain"
 )
 
@@ -15,48 +15,52 @@ var (
 	ErrAPIKeyValidationSoft = errors.New("api key validation uncertain")
 )
 
-// NewChatProvider 为指定模型创建已配置的聊天提供方。
 func NewChatProvider(model string) (domain.ChatProvider, error) {
-	if configs.GlobalAppConfig == nil {
+	if config.GlobalAppConfig == nil {
 		return nil, fmt.Errorf("config.yaml is not loaded")
 	}
 
-	providerName := CurrentProvider()
-	if model == "" {
-		model = DefaultModel()
+	providerName := strings.TrimSpace(config.GlobalAppConfig.AI.Provider)
+	if providerName == "" {
+		providerName = "modelscope"
 	}
 	if model == "" {
-		return nil, fmt.Errorf("ai.model is required for provider %s", providerName)
-	}
-	baseURL, err := ResolveChatEndpoint(configs.GlobalAppConfig, model)
-	if err != nil {
-		return nil, err
-	}
-	apiKey := configs.RuntimeAPIKey()
-	if apiKey == "" {
-		return nil, fmt.Errorf("missing %s environment variable", configs.RuntimeAPIKeyEnvVarName())
+		model = strings.TrimSpace(config.GlobalAppConfig.AI.Model)
 	}
 
-	return &ChatCompletionProvider{
-		APIKey:  apiKey,
-		BaseURL: baseURL,
-		Model:   model,
-	}, nil
+	switch strings.ToLower(providerName) {
+	case "modelscope":
+		apiKey := strings.TrimSpace(config.GlobalAppConfig.AI.APIKey)
+		if apiKey == "" {
+			return nil, fmt.Errorf("missing ai.api_key in config.yaml")
+		}
+		modelName := model
+		if modelName == "" {
+			modelName = DefaultModel()
+		}
+		return &ModelScopeProvider{
+			APIKey: apiKey,
+			Model:  modelName,
+		}, nil
+	default:
+		return nil, fmt.Errorf("unsupported ai.provider: %s", providerName)
+	}
 }
 
-// ValidateChatAPIKey 按当前提供方配置校验运行时 API Key。
-func ValidateChatAPIKey(ctx context.Context, cfg *configs.AppConfiguration) error {
+func ValidateChatAPIKey(ctx context.Context, cfg *config.AppConfiguration) error {
 	if cfg == nil {
 		return fmt.Errorf("config is nil")
 	}
 
-	providerName := providerNameFromConfig(cfg)
+	providerName := strings.TrimSpace(cfg.AI.Provider)
 	if providerName == "" {
-		return fmt.Errorf("unsupported ai.provider: %s", cfg.AI.Provider)
-	}
-	if strings.TrimSpace(cfg.AI.Model) == "" {
-		return fmt.Errorf("ai.model is required for provider %s", providerName)
+		providerName = "modelscope"
 	}
 
-	return validateModelScopeAPIKey(ctx, cfg)
+	switch strings.ToLower(providerName) {
+	case "modelscope":
+		return validateModelScopeAPIKey(ctx, cfg)
+	default:
+		return fmt.Errorf("unsupported ai.provider: %s", providerName)
+	}
 }

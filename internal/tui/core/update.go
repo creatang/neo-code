@@ -2,23 +2,16 @@ package core
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"strings"
 
-	"go-llm-demo/configs"
+	"github.com/charmbracelet/bubbletea"
 	"go-llm-demo/internal/server/domain"
-	"go-llm-demo/internal/server/infra/provider"
-	"go-llm-demo/internal/server/infra/tools"
 	"go-llm-demo/internal/tui/infra"
-
-	tea "github.com/charmbracelet/bubbletea"
 )
 
-// Update 处理 Bubble Tea 事件并驱动聊天状态更新。
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 
@@ -27,148 +20,33 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.SetWidth(msg.Width)
 		m.SetHeight(msg.Height)
-		m.syncLayout()
-		m.refreshViewport()
 		return m, nil
 
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 
-	case tea.MouseMsg:
-		var vpCmd tea.Cmd
-		m.viewport, vpCmd = m.viewport.Update(msg)
-		m.autoScroll = m.viewport.AtBottom()
-		return m, vpCmd
-
 	case StreamChunkMsg:
 		if m.generating {
 			m.AppendLastMessage(msg.Content)
-			m.refreshViewport()
 		}
-		return m, m.streamResponseFromChannel()
+		return m, nil
 
 	case StreamDoneMsg:
-		m.mu.Lock()
 		m.generating = false
-		m.streamChan = nil
-
-		var lastContent string
-		shouldCheckToolCall := !m.toolExecuting && len(m.messages) > 0
-		if len(m.messages) > 0 {
-			lastMsg := &m.messages[len(m.messages)-1]
-			lastMsg.Streaming = false
-			if lastMsg.Role == "assistant" {
-				lastContent = lastMsg.Content
-			} else {
-				shouldCheckToolCall = false
-			}
-		}
-		m.mu.Unlock()
-
-		// 检查最后一条AI消息是否为JSON格式的工具调用
-		if shouldCheckToolCall {
-			var jsonData map[string]interface{}
-			if err := json.Unmarshal([]byte(lastContent), &jsonData); err == nil {
-				if toolName, ok := jsonData["tool"].(string); ok && toolName != "" {
-					m.mu.Lock()
-					if m.toolExecuting {
-						m.mu.Unlock()
-						return m, nil
-					}
-					m.toolExecuting = true
-					m.mu.Unlock()
-
-					// 显示工具执行中提示
-					if toolParams, ok := jsonData["params"].(map[string]interface{}); ok {
-						if filePath, ok := toolParams["filePath"].(string); ok && toolName == "read" {
-							m.AddMessage("system", fmt.Sprintf("read:正在读取%s文件...", filePath))
-						} else if filePath, ok := toolParams["filePath"].(string); ok && (toolName == "edit" || toolName == "write") {
-							m.AddMessage("system", fmt.Sprintf("%s:正在处理%s文件...", toolName, filePath))
-						} else {
-							m.AddMessage("system", fmt.Sprintf("%s:正在执行工具...", toolName))
-						}
-					}
-
-					// 在goroutine中执行工具调用
-					return m, func() tea.Msg {
-						var tool tools.Tool
-						switch toolName {
-						case "read":
-							tool = &tools.ReadTool{}
-						case "write":
-							tool = &tools.WriteTool{}
-						case "edit":
-							tool = &tools.EditTool{}
-						case "bash":
-							tool = &tools.BashTool{}
-						case "list":
-							tool = &tools.ListTool{}
-						case "grep":
-							tool = &tools.GrepTool{}
-						default:
-							m.mu.Lock()
-							m.toolExecuting = false
-							m.mu.Unlock()
-							return ToolErrorMsg{Err: fmt.Errorf("不支持的工具: %s", toolName)}
-						}
-
-						var paramsMap map[string]interface{}
-						if paramsRaw, ok := jsonData["params"]; ok {
-							if paramsCasted, ok := paramsRaw.(map[string]interface{}); ok {
-								paramsMap = convertSnakeCaseToCamelCase(paramsCasted)
-							} else {
-								m.mu.Lock()
-								m.toolExecuting = false
-								m.mu.Unlock()
-								return ToolErrorMsg{Err: fmt.Errorf("工具参数格式错误")}
-							}
-						} else {
-							paramsMap = make(map[string]interface{})
-						}
-
-						result := tool.Run(paramsMap)
-
-						if result.Success {
-							return ToolResultMsg{Result: result}
-						}
-						return ToolErrorMsg{Err: fmt.Errorf("%s", result.Error)}
-					}
-				}
-			}
-		}
-		m.refreshViewport()
-
+		m.FinishLastMessage()
 		return m, nil
 
 	case StreamErrorMsg:
-		m.mu.Lock()
 		m.generating = false
-		m.streamChan = nil
-		replacedPlaceholder := false
-		if len(m.messages) > 0 {
-			lastMsg := &m.messages[len(m.messages)-1]
-			if lastMsg.Role == "assistant" && strings.TrimSpace(lastMsg.Content) == "" {
-				lastMsg.Content = fmt.Sprintf("错误: %v", msg.Err)
-				lastMsg.Streaming = false
-				replacedPlaceholder = true
-			}
-		}
-		m.mu.Unlock()
-		if !replacedPlaceholder {
-			m.AddMessage("assistant", fmt.Sprintf("错误: %v", msg.Err))
-		}
-		m.TrimHistory(m.historyTurns)
-		m.refreshViewport()
+		m.AddMessage("assistant", fmt.Sprintf("错误: %v", msg.Err))
 		return m, nil
 
 	case ShowHelpMsg:
 		m.mode = ModeHelp
-		m.refreshViewport()
 		return m, nil
 
 	case HideHelpMsg:
 		m.mode = ModeChat
-		m.refreshViewport()
 		return m, nil
 
 	case RefreshMemoryMsg:
@@ -176,110 +54,86 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if err == nil && stats != nil {
 			m.memoryStats = *stats
 		}
-		m.refreshViewport()
 		return m, nil
 
 	case ExitMsg:
 		return m, tea.Quit
-
-	case ToolResultMsg:
-		m.mu.Lock()
-		m.toolExecuting = false
-		m.mu.Unlock()
-		// 将工具执行结果添加为系统消息，然后重新获取AI响应
-		m.AddMessage("system", fmt.Sprintf("工具执行结果: %s", msg.Result.Output))
-		m.AddMessage("assistant", "")
-		m.generating = true
-		m.refreshViewport()
-
-		// 构建包含工具结果的消息并重新请求AI
-		messages := m.buildMessages()
-		return m, m.streamResponse(messages)
-
-	case ToolErrorMsg:
-		m.mu.Lock()
-		m.toolExecuting = false
-		m.mu.Unlock()
-		// 将工具执行错误添加为系统消息
-		m.AddMessage("system", fmt.Sprintf("工具执行错误: %v", msg.Err))
-		m.AddMessage("assistant", "")
-		m.generating = true
-		m.refreshViewport()
-
-		// 构建包含错误信息的消息并重新请求AI
-		messages := m.buildMessages()
-		return m, m.streamResponse(messages)
 	}
 
 	return m, cmd
 }
 
 func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if msg.Type == tea.KeyEsc && m.mode == ModeHelp {
-		m.mode = ModeChat
-		m.refreshViewport()
-		return *m, nil
-	}
-
 	switch msg.Type {
-	case tea.KeyF5:
-		return m.handleSubmit()
 
-	case tea.KeyF8:
-		return m.handleSubmit()
-
-	case tea.KeyPgUp:
-		m.autoScroll = false
-		m.viewport.HalfViewUp()
+	case tea.KeyCtrlC:
+		if m.waitingCode {
+			m.waitingCode = false
+			m.codeLines = nil
+			m.codeDelim = ""
+		}
 		return *m, nil
 
-	case tea.KeyPgDown:
-		m.viewport.HalfViewDown()
-		m.autoScroll = m.viewport.AtBottom()
+	case tea.KeyCtrlD:
+		if m.waitingCode {
+			return *m, m.submitCode()
+		}
 		return *m, nil
+
+	case tea.KeyEnter:
+		return m.handleEnter()
 
 	case tea.KeyUp:
-		if strings.TrimSpace(m.textarea.Value()) == "" && len(m.commandHistory) > 0 {
+		if len(m.commandHistory) > 0 {
 			if m.cmdHistIndex < len(m.commandHistory)-1 {
 				m.cmdHistIndex++
 			}
 			if m.cmdHistIndex >= 0 && m.cmdHistIndex < len(m.commandHistory) {
-				m.textarea.SetValue(m.commandHistory[len(m.commandHistory)-1-m.cmdHistIndex])
-				m.textarea.CursorEnd()
-				return *m, nil
+				m.inputBuffer = m.commandHistory[len(m.commandHistory)-1-m.cmdHistIndex]
 			}
 		}
+		return *m, nil
+
 	case tea.KeyDown:
 		if m.cmdHistIndex > 0 {
 			m.cmdHistIndex--
-			m.textarea.SetValue(m.commandHistory[len(m.commandHistory)-1-m.cmdHistIndex])
-			m.textarea.CursorEnd()
-			return *m, nil
-		}
-		if m.cmdHistIndex == 0 {
+			m.inputBuffer = m.commandHistory[len(m.commandHistory)-1-m.cmdHistIndex]
+		} else {
 			m.cmdHistIndex = -1
-			m.textarea.Reset()
+			m.inputBuffer = ""
+		}
+		return *m, nil
+
+	case tea.KeyRunes:
+		r := string(msg.Runes)
+		if msg.Type == tea.KeySpace && m.inputBuffer == "" {
 			return *m, nil
 		}
+		m.inputBuffer += r
+		m.cmdHistIndex = -1
+		return *m, nil
+
+	case tea.KeyBackspace:
+		if len(m.inputBuffer) > 0 {
+			m.inputBuffer = m.inputBuffer[:len(m.inputBuffer)-1]
+		}
+		return *m, nil
+
+	case tea.KeyEsc:
+		if m.mode == ModeHelp {
+			m.mode = ModeChat
+		}
+		return *m, nil
 	}
 
-	m.cmdHistIndex = -1
-	var inputCmd tea.Cmd
-	m.textarea, inputCmd = m.textarea.Update(msg)
-	m.refreshViewport()
-	if m.viewport.AtBottom() {
-		m.autoScroll = true
-	}
-	return *m, inputCmd
+	return *m, nil
 }
 
-func (m *Model) handleSubmit() (tea.Model, tea.Cmd) {
-	input := strings.TrimSpace(m.textarea.Value())
-	m.textarea.Reset()
-	m.textarea.SetHeight(m.calculateInputHeight())
-	m.syncLayout()
+func (m *Model) handleEnter() (tea.Model, tea.Cmd) {
+	input := strings.TrimSpace(m.inputBuffer)
+	m.inputBuffer = ""
 
-	if input == "" {
+	if input == "" && !m.waitingCode {
 		return *m, nil
 	}
 
@@ -289,21 +143,28 @@ func (m *Model) handleSubmit() (tea.Model, tea.Cmd) {
 		return *m, nil
 	}
 
+	if m.waitingCode {
+		if isEndDelimiter(input, m.codeDelim) {
+			return *m, m.submitCode()
+		}
+		m.codeLines = append(m.codeLines, input)
+		return *m, nil
+	}
+
+	if isStartDelimiter(input) {
+		m.waitingCode = true
+		m.codeDelim = getDelimiter(input)
+		m.codeLines = nil
+		return *m, nil
+	}
+
 	if strings.HasPrefix(input, "/") {
 		return m.handleCommand(input)
-	}
-	if !m.apiKeyReady {
-		m.AddMessage("assistant", "当前 API Key 未通过校验，请使用 /apikey <env_name>、/provider <name>、/switch <model> 调整配置，或 /exit 退出。")
-		return *m, nil
 	}
 
 	m.AddMessage("user", input)
 	m.AddMessage("assistant", "")
-	// 在请求发出前先裁剪原始消息，避免 UI 历史无限扩张并影响短期上下文质量。
-	m.TrimHistory(m.historyTurns)
 	m.generating = true
-	m.autoScroll = true
-	m.refreshViewport()
 
 	m.commandHistory = append(m.commandHistory, input)
 	m.cmdHistIndex = -1
@@ -320,136 +181,26 @@ func (m *Model) handleCommand(input string) (tea.Model, tea.Cmd) {
 
 	cmd := fields[0]
 	args := fields[1:]
-	if !m.apiKeyReady && !isAPIKeyRecoveryCommand(cmd) {
-		m.AddMessage("assistant", "当前 API Key 未通过校验，仅支持 /apikey <env_name>、/provider <name>、/help、/models、/switch <model> 或 /exit。")
-		return *m, nil
-	}
 
 	switch cmd {
 	case "/help":
 		m.mode = ModeHelp
 	case "/exit", "/quit", "/q":
 		return *m, tea.Quit
-	case "/apikey":
-		if len(args) == 0 {
-			m.AddMessage("assistant", "用法: /apikey <env_name>")
-			return *m, nil
-		}
-		cfg := configs.GlobalAppConfig
-		if cfg == nil {
-			m.AddMessage("assistant", "当前配置未加载，无法切换 API Key 环境变量名")
-			return *m, nil
-		}
-		previousEnvName := cfg.AI.APIKey
-		cfg.AI.APIKey = strings.TrimSpace(args[0])
-		envName := cfg.APIKeyEnvVarName()
-		if cfg.RuntimeAPIKey() == "" {
-			m.apiKeyReady = false
-			m.AddMessage("assistant", fmt.Sprintf("环境变量 %s 未设置。请继续使用 /apikey <env_name> 切换，或 /exit 退出。", envName))
-			return *m, nil
-		}
-		err := provider.ValidateChatAPIKey(context.Background(), cfg)
-		if err == nil {
-			if writeErr := configs.WriteAppConfig(m.configPath, cfg); writeErr != nil {
-				cfg.AI.APIKey = previousEnvName
-				m.apiKeyReady = configs.RuntimeAPIKey() != ""
-				m.AddMessage("assistant", fmt.Sprintf("切换 API Key 环境变量名失败: %v", writeErr))
-				return *m, nil
-			}
-			m.apiKeyReady = true
-			m.AddMessage("assistant", fmt.Sprintf("已切换 API Key 环境变量名为 %s，并通过校验。", envName))
-			return *m, nil
-		}
-		m.apiKeyReady = false
-		if errors.Is(err, provider.ErrInvalidAPIKey) {
-			m.AddMessage("assistant", fmt.Sprintf("环境变量 %s 中的 API Key 无效：%v。请继续使用 /apikey <env_name>、/provider <name>、/switch <model> 调整配置，或 /exit 退出。", envName, err))
-			return *m, nil
-		}
-		m.AddMessage("assistant", fmt.Sprintf("环境变量 %s 的 API Key 未通过校验：%v。请继续使用 /apikey <env_name>、/provider <name>、/switch <model> 调整配置，或 /exit 退出。", envName, err))
-		return *m, nil
-	case "/provider":
-		if len(args) == 0 {
-			m.AddMessage("assistant", fmt.Sprintf("用法: /provider <name>\n可用提供商:\n  - %s", strings.Join(provider.SupportedProviders(), "\n  - ")))
-			return *m, nil
-		}
-		cfg := configs.GlobalAppConfig
-		if cfg == nil {
-			m.AddMessage("assistant", "当前配置未加载，无法切换提供商")
-			return *m, nil
-		}
-		providerName, ok := provider.NormalizeProviderName(strings.Join(args, " "))
-		if !ok {
-			m.AddMessage("assistant", fmt.Sprintf("不支持的提供商: %s\n可用提供商:\n  - %s", strings.Join(args, " "), strings.Join(provider.SupportedProviders(), "\n  - ")))
-			return *m, nil
-		}
-		cfg.AI.Provider = providerName
-		if provider.ProviderSupportsModelCatalog(providerName) && !provider.IsSupportedModelForConfig(cfg, cfg.AI.Model) {
-			cfg.AI.Model = provider.DefaultModelForConfig(cfg)
-		}
-		m.activeModel = cfg.AI.Model
-		if writeErr := configs.WriteAppConfig(m.configPath, cfg); writeErr != nil {
-			m.AddMessage("assistant", fmt.Sprintf("切换提供商失败: %v", writeErr))
-			return *m, nil
-		}
-		if cfg.RuntimeAPIKey() == "" {
-			m.apiKeyReady = false
-			m.AddMessage("assistant", fmt.Sprintf("已切换到提供商 %s，但当前环境变量 %s 未设置。请使用 /apikey <env_name> 或设置该环境变量。", providerName, cfg.APIKeyEnvVarName()))
-			return *m, nil
-		}
-		if err := provider.ValidateChatAPIKey(context.Background(), cfg); err == nil {
-			m.apiKeyReady = true
-			if provider.ProviderSupportsModelCatalog(providerName) {
-				m.AddMessage("assistant", fmt.Sprintf("已切换到提供商 %s，当前模型: %s。", providerName, cfg.AI.Model))
-			} else {
-				m.AddMessage("assistant", fmt.Sprintf("已切换到提供商 %s。该提供商不提供内置模型列表，请确认当前模型 %s，或使用 /switch <model> 修改。", providerName, cfg.AI.Model))
-			}
-			return *m, nil
-		} else {
-			m.apiKeyReady = false
-			m.AddMessage("assistant", fmt.Sprintf("已切换到提供商 %s，但 API Key 未通过校验：%v。可继续使用 /apikey <env_name>、/provider <name>、/switch <model> 调整配置。", providerName, err))
-			return *m, nil
-		}
 	case "/switch":
 		if len(args) == 0 {
 			m.AddMessage("assistant", "用法: /switch <model>")
 			return *m, nil
 		}
-		cfg := configs.GlobalAppConfig
-		if cfg == nil {
-			m.AddMessage("assistant", "当前配置未加载，无法切换模型")
-			return *m, nil
-		}
-		target := strings.Join(args, " ")
-		if provider.ProviderSupportsModelCatalog(cfg.AI.Provider) && !provider.IsSupportedModelForConfig(cfg, target) {
+		target := args[0]
+		if !containsModel(m.client.ListModels(), target) {
 			m.AddMessage("assistant", fmt.Sprintf("模型不可用: %s", target))
 			return *m, nil
 		}
-		cfg.AI.Model = target
-		if writeErr := configs.WriteAppConfig(m.configPath, cfg); writeErr != nil {
-			m.AddMessage("assistant", fmt.Sprintf("切换模型失败: %v", writeErr))
-			return *m, nil
-		}
 		m.activeModel = target
-		if cfg.RuntimeAPIKey() == "" {
-			m.apiKeyReady = false
-			m.AddMessage("assistant", fmt.Sprintf("已切换到模型: %s，但当前环境变量 %s 未设置。", target, cfg.APIKeyEnvVarName()))
-			return *m, nil
-		}
-		if err := provider.ValidateChatAPIKey(context.Background(), cfg); err == nil {
-			m.apiKeyReady = true
-			m.AddMessage("assistant", fmt.Sprintf("已切换到模型: %s", target))
-			return *m, nil
-		} else {
-			m.apiKeyReady = false
-			m.AddMessage("assistant", fmt.Sprintf("已切换到模型 %s，但 API Key 未通过校验：%v。", target, err))
-			return *m, nil
-		}
+		m.AddMessage("assistant", fmt.Sprintf("已切换到模型: %s", target))
 	case "/models":
 		models := m.client.ListModels()
-		if len(models) == 0 {
-			m.AddMessage("assistant", fmt.Sprintf("当前提供商 %s 不提供内置模型列表，请使用 /switch <model> 手动设置模型。", provider.CurrentProvider()))
-			return *m, nil
-		}
 		list := strings.Join(models, "\n  - ")
 		m.AddMessage("assistant", fmt.Sprintf("可用模型:\n  - %s", list))
 	case "/memory":
@@ -483,6 +234,12 @@ func (m *Model) handleCommand(input string) (tea.Model, tea.Cmd) {
 			return *m, nil
 		}
 		m.messages = nil
+		if m.persona != "" {
+			m.messages = append(m.messages, Message{
+				Role:    "system",
+				Content: m.persona,
+			})
+		}
 		stats, _ := m.client.GetMemoryStats(context.Background())
 		if stats != nil {
 			m.memoryStats = *stats
@@ -499,24 +256,14 @@ func (m *Model) handleCommand(input string) (tea.Model, tea.Cmd) {
 	case "/explain":
 		if len(args) > 0 {
 			code := strings.Join(args, " ")
-			return *m, m.sendCodeToAI(code)
+			return *m, m.explainCode(code)
 		}
 		return *m, nil
 	default:
 		m.AddMessage("assistant", fmt.Sprintf("未知命令: %s，输入 /help 查看帮助", cmd))
 	}
-	m.refreshViewport()
 
 	return *m, nil
-}
-
-func isAPIKeyRecoveryCommand(cmd string) bool {
-	switch cmd {
-	case "/apikey", "/provider", "/help", "/models", "/switch", "/exit", "/quit", "/q":
-		return true
-	default:
-		return false
-	}
 }
 
 func containsModel(models []string, target string) bool {
@@ -552,14 +299,9 @@ func formatTypeStats(byType map[string]int) string {
 }
 
 func (m *Model) buildMessages() []infra.Message {
-	m.mu.Lock()
-	defer m.mu.Unlock()
 	result := make([]infra.Message, 0, len(m.messages))
 
 	for _, msg := range m.messages {
-		if msg.Role == "assistant" && strings.TrimSpace(msg.Content) == "" {
-			continue
-		}
 		if msg.Role == "system" {
 			result = append(result, infra.Message{
 				Role:    msg.Role,
@@ -569,9 +311,6 @@ func (m *Model) buildMessages() []infra.Message {
 	}
 
 	for _, msg := range m.messages {
-		if msg.Role == "assistant" && strings.TrimSpace(msg.Content) == "" {
-			continue
-		}
 		if msg.Role != "system" {
 			result = append(result, infra.Message{
 				Role:    msg.Role,
@@ -584,66 +323,70 @@ func (m *Model) buildMessages() []infra.Message {
 }
 
 func (m *Model) streamResponse(messages []infra.Message) tea.Cmd {
-	stream, err := m.client.Chat(context.Background(), messages, m.activeModel)
-	if err != nil {
-		return func() tea.Msg { return StreamErrorMsg{Err: err} }
-	}
-
-	m.streamChan = stream
 	return func() tea.Msg {
-		chunk, ok := <-stream
-		if !ok {
-			return StreamDoneMsg{}
+		stream, err := m.client.Chat(context.Background(), messages, m.activeModel)
+		if err != nil {
+			return StreamErrorMsg{Err: err}
 		}
-		return StreamChunkMsg{Content: chunk}
+
+		for chunk := range stream {
+			m.AppendLastMessage(chunk)
+		}
+
+		return StreamDoneMsg{}
 	}
 }
 
-func (m *Model) streamResponseFromChannel() tea.Cmd {
-	if m.streamChan == nil {
-		return nil
-	}
-	return func() tea.Msg {
-		chunk, ok := <-m.streamChan
-		if !ok {
-			return StreamDoneMsg{}
-		}
-		return StreamChunkMsg{Content: chunk}
-	}
+func (m *Model) submitCode() tea.Cmd {
+	m.waitingCode = false
+	code := strings.Join(m.codeLines, "\n")
+	m.codeLines = nil
+	m.codeDelim = ""
+
+	m.AddMessage("user", fmt.Sprintf("```\n%s\n```", code))
+	m.AddMessage("assistant", "")
+	m.generating = true
+
+	return tea.Batch(
+		Chunk(""),
+		m.sendCodeToAI(code),
+	)
 }
 
 func (m *Model) sendCodeToAI(code string) tea.Cmd {
 	prompt := fmt.Sprintf("请解释以下代码：\n```\n%s\n```", code)
 	m.AddMessage("user", prompt)
 	m.AddMessage("assistant", "")
-	m.TrimHistory(m.historyTurns)
 	m.generating = true
-	m.autoScroll = true
-	m.refreshViewport()
 
 	messages := m.buildMessages()
 	return m.streamResponse(messages)
 }
 
-// convertSnakeCaseToCamelCase 将snake_case键转换为camelCase
-func convertSnakeCaseToCamelCase(params map[string]interface{}) map[string]interface{} {
-	result := make(map[string]interface{})
-	for key, value := range params {
-		// 将snake_case转换为camelCase
-		parts := strings.Split(key, "_")
-		if len(parts) > 1 {
-			camelKey := parts[0]
-			for i := 1; i < len(parts); i++ {
-				if len(parts[i]) > 0 {
-					camelKey += strings.ToUpper(parts[i][:1]) + parts[i][1:]
-				}
-			}
-			result[camelKey] = value
-		} else {
-			result[key] = value
-		}
+func (m *Model) explainCode(code string) tea.Cmd {
+	m.AddMessage("user", fmt.Sprintf("请解释以下代码：\n```\n%s\n```", code))
+	m.AddMessage("assistant", "")
+	m.generating = true
+
+	messages := m.buildMessages()
+	return m.streamResponse(messages)
+}
+
+func isStartDelimiter(s string) bool {
+	s = strings.TrimSpace(s)
+	return s == "'''" || s == `"""` || s == "```"
+}
+
+func isEndDelimiter(line, delim string) bool {
+	return strings.TrimSpace(line) == delim
+}
+
+func getDelimiter(s string) string {
+	s = strings.TrimSpace(s)
+	if len(s) >= 3 {
+		return s[:3]
 	}
-	return result
+	return s
 }
 
 func runCodeCmd(code string) tea.Cmd {
@@ -702,51 +445,4 @@ func detectLanguage(code string) (string, string) {
 	}
 
 	return "", ""
-}
-
-func (m *Model) calculateInputHeight() int {
-	lines := strings.Count(m.textarea.Value(), "\n") + 1
-	if lines < 3 {
-		return 3
-	}
-	if lines > 8 {
-		return 8
-	}
-	return lines
-}
-
-func (m *Model) syncLayout() {
-	if m.width <= 0 || m.height <= 0 {
-		return
-	}
-	inputWidth := m.width
-	if inputWidth < 20 {
-		inputWidth = 20
-	}
-	m.textarea.SetWidth(inputWidth)
-	m.textarea.SetHeight(m.calculateInputHeight())
-	m.textarea.Prompt = "> "
-
-	statusHeight := 1
-	inputHeight := m.textarea.Height() + 2
-	helpHeight := 0
-	if m.mode == ModeHelp {
-		helpHeight = minInt(20, m.height-statusHeight-3)
-	}
-	contentHeight := m.height - statusHeight - inputHeight - helpHeight
-	if contentHeight < 3 {
-		contentHeight = 3
-	}
-	m.viewport.Width = m.width
-	m.viewport.Height = contentHeight
-}
-
-func (m *Model) refreshViewport() {
-	m.syncLayout()
-	content := m.renderChatContent()
-	m.viewport.SetContent(content)
-	if m.autoScroll || m.viewport.AtBottom() {
-		m.viewport.GotoBottom()
-		m.autoScroll = true
-	}
 }
