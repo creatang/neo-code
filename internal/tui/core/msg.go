@@ -1,92 +1,9 @@
 package core
 
-import "github.com/charmbracelet/bubbletea"
-
-type Msg interface{ isMsg() }
-
-type (
-	InitMsg struct{}
-
-	ResizeMsg struct {
-		Width  int
-		Height int
-	}
-
-	InputMsg struct {
-		Value string
-	}
-
-	CodeLineMsg struct {
-		Line string
-	}
-
-	CodeDelimiterMsg struct {
-		Delim string
-	}
-
-	SubmitMsg struct{}
-
-	CancelMsg struct{}
-
-	StreamChunkMsg struct {
-		Content string
-	}
-
-	StreamDoneMsg struct{}
-
-	StreamErrorMsg struct {
-		Err error
-	}
-
-	CommandMsg struct {
-		Name string
-		Args []string
-	}
-
-	SwitchModelMsg struct {
-		Model string
-	}
-
-	MemoryStatsMsg struct {
-		Stats interface{}
-	}
-
-	ShowHelpMsg struct{}
-
-	HideHelpMsg struct{}
-
-	ExitMsg struct{}
-
-	RefreshMemoryMsg struct{}
+import (
+	tea "github.com/charmbracelet/bubbletea"
+	"go-llm-demo/internal/server/infra/tools"
 )
-
-func (InitMsg) isMsg()          {}
-func (ResizeMsg) isMsg()        {}
-func (InputMsg) isMsg()         {}
-func (CodeLineMsg) isMsg()      {}
-func (CodeDelimiterMsg) isMsg() {}
-func (SubmitMsg) isMsg()        {}
-func (CancelMsg) isMsg()        {}
-func (StreamChunkMsg) isMsg()   {}
-func (StreamDoneMsg) isMsg()    {}
-func (StreamErrorMsg) isMsg()   {}
-func (CommandMsg) isMsg()       {}
-func (SwitchModelMsg) isMsg()   {}
-func (MemoryStatsMsg) isMsg()   {}
-func (ShowHelpMsg) isMsg()      {}
-func (HideHelpMsg) isMsg()      {}
-func (ExitMsg) isMsg()          {}
-func (RefreshMemoryMsg) isMsg() {}
-
-type TickMsg struct{}
-
-func (TickMsg) isMsg() {}
-
-func Tick() tea.Cmd {
-	return func() tea.Msg {
-		return TickMsg{}
-	}
-}
 
 func Chunk(content string) tea.Cmd {
 	return func() tea.Msg {
@@ -105,3 +22,47 @@ func CmdErr(err error) tea.Cmd {
 		return StreamErrorMsg{Err: err}
 	}
 }
+
+type StreamChunkMsg struct {
+	Content string
+}
+
+func (StreamChunkMsg) isMsg() {}
+
+type StreamDoneMsg struct{}
+
+func (StreamDoneMsg) isMsg() {}
+
+type StreamErrorMsg struct {
+	Err error
+}
+
+func (StreamErrorMsg) isMsg() {}
+
+type ToolResultMsg struct {
+	Result *tools.ToolResult
+}
+
+func (ToolResultMsg) isMsg() {}
+
+type ToolErrorMsg struct {
+	Err error
+}
+
+func (ToolErrorMsg) isMsg() {}
+
+type ExitMsg struct{}
+
+func (ExitMsg) isMsg() {}
+
+type ShowHelpMsg struct{}
+
+func (ShowHelpMsg) isMsg() {}
+
+type HideHelpMsg struct{}
+
+func (HideHelpMsg) isMsg() {}
+
+type RefreshMemoryMsg struct{}
+
+func (RefreshMemoryMsg) isMsg() {}

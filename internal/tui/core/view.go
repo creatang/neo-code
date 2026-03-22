@@ -2,7 +2,6 @@ package core
 
 import (
 	"strings"
-	"time"
 
 	"github.com/charmbracelet/lipgloss"
 	"go-llm-demo/internal/tui/components"
@@ -19,9 +18,6 @@ func (m Model) View() string {
 		content = RenderHelp(m.width)
 	default:
 		content = m.chatView()
-		if m.generating {
-			content += thinkingAnimation()
-		}
 	}
 
 	statusHeight := 1
@@ -91,14 +87,6 @@ func countLines(s string) int {
 		}
 	}
 	return count
-}
-
-func thinkingAnimation() string {
-	frames := []string{"◐", "◓", "◑", "◒"}
-	frame := frames[int(time.Now().UnixMilli()/200)%len(frames)]
-	return lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#E5C07B")).
-		Render(" %s 正在思考...", frame)
 }
 
 func RenderHelp(width int) string {

@@ -603,18 +603,18 @@ func (m *Model) buildMessages() []infra.Message {
 }
 
 func (m *Model) streamResponse(messages []infra.Message) tea.Cmd {
-	return func() tea.Msg {
-		stream, err := m.client.Chat(context.Background(), messages, m.activeModel)
-		if err != nil {
-			return StreamErrorMsg{Err: err}
-		}
-
-		for chunk := range stream {
-			m.AppendLastMessage(chunk)
-		}
-
-		return StreamDoneMsg{}
+	stream, err := m.client.Chat(context.Background(), messages, m.activeModel)
+	if err != nil {
+		return func() tea.Msg { return StreamErrorMsg{Err: err} }
 	}
+
+	var cmds []tea.Cmd
+	for chunk := range stream {
+		cmds = append(cmds, Chunk(chunk))
+	}
+	cmds = append(cmds, Done())
+
+	return tea.Sequence(cmds...)
 }
 
 func (m *Model) sendCodeToAI(code string) tea.Cmd {
