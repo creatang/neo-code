@@ -24,11 +24,9 @@ func (ml MessageList) Render() string {
 	if len(ml.Messages) == 0 {
 		return ""
 	}
-
-	const maxVisible = 30
-	visibleMessages := ml.Messages
-	if len(ml.Messages) > maxVisible {
-		visibleMessages = ml.Messages[len(ml.Messages)-maxVisible:]
+	contentWidth := ml.Width - 4
+	if contentWidth < 20 {
+		contentWidth = ml.Width
 	}
 
 	userMsgStyle := lipgloss.NewStyle().
@@ -43,25 +41,27 @@ func (ml MessageList) Render() string {
 
 	var b strings.Builder
 
-	for i, msg := range visibleMessages {
-		idx := len(ml.Messages) - len(visibleMessages) + i + 1
+	wrapStyle := lipgloss.NewStyle().MaxWidth(contentWidth)
+
+	for i, msg := range ml.Messages {
+		idx := i + 1
 		switch msg.Role {
 		case "user":
 			b.WriteString(userMsgStyle.Render(fmt.Sprintf("你 [%d]:", idx)))
 			b.WriteString(" ")
-			b.WriteString(msg.Content)
+			b.WriteString(wrapStyle.Render(msg.Content))
 			b.WriteString("\n\n")
 
 		case "assistant":
 			b.WriteString(assistantMsgStyle.Render(fmt.Sprintf("Neo [%d]:", idx)))
 			b.WriteString("\n")
-			b.WriteString(RenderContent(msg.Content))
+			b.WriteString(RenderContent(msg.Content, contentWidth))
 			b.WriteString("\n\n")
 
 		case "system":
 			b.WriteString(systemMsgStyle.Render("[系统]"))
 			b.WriteString(" ")
-			b.WriteString(msg.Content)
+			b.WriteString(wrapStyle.Render(msg.Content))
 			b.WriteString("\n\n")
 		}
 	}

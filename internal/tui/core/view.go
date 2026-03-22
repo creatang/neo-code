@@ -8,29 +8,25 @@ import (
 )
 
 func (m Model) View() string {
-	if m.width < 20 || m.height < 5 {
+	if m.width < 20 || m.height < 6 {
 		return "窗口太小"
 	}
 
-	var content string
-	switch m.mode {
-	case ModeHelp:
-		content = RenderHelp(m.width)
-	default:
-		content = m.chatView()
-	}
-
 	statusHeight := 1
-	inputHeight := 2
 	helpHeight := 0
-
 	if m.mode == ModeHelp {
-		helpHeight = 20
+		helpHeight = minInt(20, m.height-statusHeight-3)
 	}
 
-	availableHeight := m.height - statusHeight - inputHeight - helpHeight
-	if availableHeight < 5 {
-		availableHeight = 5
+	inputContent := m.renderInputArea()
+	inputHeight := countLines(inputContent)
+	if inputHeight < 4 {
+		inputHeight = 4
+	}
+
+	contentHeight := m.height - statusHeight - inputHeight - helpHeight
+	if contentHeight < 3 {
+		contentHeight = 3
 	}
 
 	statusBar := lipgloss.NewStyle().
@@ -43,27 +39,53 @@ func (m Model) View() string {
 			Width:      m.width,
 		}.Render())
 
-	padding := availableHeight - countLines(content)
-	if padding > 0 {
-		content += lipgloss.NewStyle().
-			Height(padding).
-			Render("")
-	}
+	viewportView := m.viewport
+	viewportView.SetContent(m.renderChatContent())
+	chatArea := lipgloss.NewStyle().
+		Width(m.width).
+		Height(contentHeight).
+		Render(viewportView.View())
 
 	inputArea := lipgloss.NewStyle().
-		Height(inputHeight).
 		Width(m.width).
-		Render(components.Input{
-			Buffer:     m.inputBuffer,
-			Multiline:  m.multilineMode,
-			CursorLine: m.cursorLine,
-			CursorCol:  m.cursorCol,
-		}.Render())
+		Render(inputContent)
 
-	return statusBar + content + inputArea
+	if m.mode == ModeHelp {
+		help := lipgloss.NewStyle().
+			Width(m.width).
+			Height(helpHeight).
+			Render(RenderHelp(m.width))
+		return statusBar + chatArea + help + inputArea
+	}
+
+	return statusBar + chatArea + inputArea
 }
 
-func (m Model) chatView() string {
+func countLines(s string) int {
+	if s == "" {
+		return 0
+	}
+	return strings.Count(s, "\n") + 1
+}
+
+func (m Model) renderInputArea() string {
+	helpText := "[Enter换行 F5/F8发送 PgUp/PgDn滚动]"
+	if !m.generating {
+		helpText = "[Enter换行 F5/F8发送 Ctrl+V粘贴 PgUp/PgDn滚动]"
+	}
+
+	footer := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#5C6370")).
+		Render(helpText)
+
+	return m.textarea.View() + "\n" + footer
+}
+
+func (m Model) renderChatContent() string {
+	return components.MessageList{Messages: m.toComponentMessages(), Width: m.viewport.Width}.Render()
+}
+
+func (m Model) toComponentMessages() []components.Message {
 	messages := make([]components.Message, len(m.messages))
 	for i, msg := range m.messages {
 		messages[i] = components.Message{
@@ -73,20 +95,14 @@ func (m Model) chatView() string {
 			Streaming: msg.Streaming,
 		}
 	}
-	return components.MessageList{Messages: messages, Width: m.width}.Render()
+	return messages
 }
 
-func countLines(s string) int {
-	if s == "" {
-		return 0
+func minInt(a, b int) int {
+	if a < b {
+		return a
 	}
-	count := 1
-	for _, c := range s {
-		if c == '\n' {
-			count++
-		}
-	}
-	return count
+	return b
 }
 
 func RenderHelp(width int) string {
@@ -137,14 +153,14 @@ func RenderHelp(width int) string {
 	}
 
 	b.WriteString("\n")
-	b.WriteString(helpStyle.Render("多行输入: Enter进入, 方向键移动, F5发送"))
+	b.WriteString(helpStyle.Render("输入框支持光标、粘贴、滚动，F5/F8 发送"))
 	b.WriteString("\n")
-	b.WriteString(helpStyle.Render("命令: /help"))
+	b.WriteString(helpStyle.Render("聊天区支持 PgUp/PgDn 和鼠标滚轮"))
 	b.WriteString("\n")
 	b.WriteString(helpStyle.Render("取消: Ctrl+C"))
 
 	b.WriteString("\n\n")
 	b.WriteString(dimStyle.Render("按 Esc 或 /help 关闭"))
 
-	return b.String()
+	return lipgloss.NewStyle().MaxWidth(width).Render(b.String())
 }

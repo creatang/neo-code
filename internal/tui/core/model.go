@@ -5,7 +5,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/charmbracelet/bubbles/cursor"
+	"github.com/charmbracelet/bubbles/textarea"
+	"github.com/charmbracelet/bubbles/viewport"
 	"github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"go-llm-demo/configs"
 	"go-llm-demo/internal/tui/infra"
 )
@@ -35,21 +39,18 @@ type Model struct {
 
 	commandHistory []string
 	cmdHistIndex   int
-	inputBuffer    string
 
-	client          infra.ChatClient
-	persona         string
-	lastKeyWasEnter bool
-
-	cursorLine    int
-	cursorCol     int
-	multilineMode bool
+	client  infra.ChatClient
+	persona string
 
 	toolExecuting bool
 	apiKeyReady   bool
 	configPath    string
 
 	streamChan <-chan string
+	textarea   textarea.Model
+	viewport   viewport.Model
+	autoScroll bool
 
 	mu sync.Mutex
 }
@@ -72,6 +73,30 @@ func NewModel(client infra.ChatClient, persona string, historyTurns int, configP
 		historyTurns = 6
 	}
 
+	input := textarea.New()
+	focusedStyle, blurredStyle := textarea.DefaultStyles()
+	focusedStyle.CursorLine = lipgloss.NewStyle().Foreground(lipgloss.Color("#E6EAF2"))
+	blurredStyle.CursorLine = lipgloss.NewStyle().Foreground(lipgloss.Color("#AAB2C0"))
+	focusedStyle.Prompt = lipgloss.NewStyle().Foreground(lipgloss.Color("#61AFEF"))
+	blurredStyle.Prompt = lipgloss.NewStyle().Foreground(lipgloss.Color("#5C6370"))
+	focusedStyle.Text = lipgloss.NewStyle().Foreground(lipgloss.Color("#E6EAF2"))
+	blurredStyle.Text = lipgloss.NewStyle().Foreground(lipgloss.Color("#AAB2C0"))
+	input.FocusedStyle = focusedStyle
+	input.BlurredStyle = blurredStyle
+	input.Placeholder = "输入消息..."
+	input.Focus()
+	input.ShowLineNumbers = false
+	input.SetHeight(3)
+	input.Prompt = "┃ "
+	input.CharLimit = 0
+	input.KeyMap.InsertNewline.SetEnabled(true)
+	input.Cursor.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#61AFEF"))
+	input.Cursor.TextStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#E6EAF2"))
+	_ = input.Cursor.SetMode(cursor.CursorBlink)
+
+	vp := viewport.New(0, 0)
+	vp.SetContent("")
+
 	return Model{
 		mode:           ModeChat,
 		focused:        "input",
@@ -85,12 +110,15 @@ func NewModel(client infra.ChatClient, persona string, historyTurns int, configP
 		persona:        persona,
 		apiKeyReady:    configs.RuntimeAPIKey() != "",
 		configPath:     configPath,
+		textarea:       input,
+		viewport:       vp,
+		autoScroll:     true,
 	}
 }
 
 // Init 返回 Bubble Tea 的初始命令。
 func (m Model) Init() tea.Cmd {
-	return nil
+	return m.textarea.Focus()
 }
 
 // SetWidth 更新当前视口宽度。

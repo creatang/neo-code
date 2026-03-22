@@ -11,9 +11,12 @@ var codeBlockStyle = lipgloss.NewStyle().
 	Background(lipgloss.Color("#282C34")).
 	Padding(0, 1)
 
-func RenderContent(content string) string {
+func RenderContent(content string, width int) string {
 	if content == "" {
 		return "..."
+	}
+	if width <= 0 {
+		width = 80
 	}
 
 	lines := strings.Split(content, "\n")
@@ -36,7 +39,7 @@ func RenderContent(content string) string {
 				b.WriteString("\n")
 			} else {
 				inCodeBlock = false
-				highlighted := HighlightCodeBlock(codeLines, codeLang)
+				highlighted := HighlightCodeBlock(codeLines, codeLang, width)
 				b.WriteString(highlighted)
 				b.WriteString(codeBlockStyle.Render("```\n"))
 				codeLines = nil
@@ -47,7 +50,7 @@ func RenderContent(content string) string {
 		if inCodeBlock {
 			codeLines = append(codeLines, line)
 		} else {
-			b.WriteString(line)
+			b.WriteString(lipgloss.NewStyle().MaxWidth(width).Render(line))
 			b.WriteString("\n")
 		}
 	}
@@ -55,7 +58,7 @@ func RenderContent(content string) string {
 	return b.String()
 }
 
-func HighlightCodeBlock(lines []string, lang string) string {
+func HighlightCodeBlock(lines []string, lang string, width int) string {
 	var b strings.Builder
 	code := strings.Join(lines, "\n")
 
@@ -63,8 +66,9 @@ func HighlightCodeBlock(lines []string, lang string) string {
 
 	highlighted := HighlightCode(code, lang)
 	highlightedLines := strings.Split(highlighted, "\n")
+	lineStyle := lipgloss.NewStyle().MaxWidth(width)
 	for _, line := range highlightedLines {
-		b.WriteString(codeBlockStyle.Render(line))
+		b.WriteString(codeBlockStyle.Render(lineStyle.Render(line)))
 		b.WriteString("\n")
 	}
 

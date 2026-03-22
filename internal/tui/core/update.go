@@ -7,9 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"reflect"
 	"strings"
-	"unicode/utf8"
 
 	"go-llm-demo/configs"
 	"go-llm-demo/internal/server/domain"
@@ -29,14 +27,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.SetWidth(msg.Width)
 		m.SetHeight(msg.Height)
+		m.syncLayout()
+		m.refreshViewport()
 		return m, nil
 
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 
+	case tea.MouseMsg:
+		var vpCmd tea.Cmd
+		m.viewport, vpCmd = m.viewport.Update(msg)
+		m.autoScroll = m.viewport.AtBottom()
+		return m, vpCmd
+
 	case StreamChunkMsg:
 		if m.generating {
 			m.AppendLastMessage(msg.Content)
+			m.refreshViewport()
 		}
 		return m, m.streamResponseFromChannel()
 
@@ -129,6 +136,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		}
+		m.refreshViewport()
 
 		return m, nil
 
@@ -150,14 +158,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.AddMessage("assistant", fmt.Sprintf("错误: %v", msg.Err))
 		}
 		m.TrimHistory(m.historyTurns)
+		m.refreshViewport()
 		return m, nil
 
 	case ShowHelpMsg:
 		m.mode = ModeHelp
+		m.refreshViewport()
 		return m, nil
 
 	case HideHelpMsg:
 		m.mode = ModeChat
+		m.refreshViewport()
 		return m, nil
 
 	case RefreshMemoryMsg:
@@ -165,6 +176,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if err == nil && stats != nil {
 			m.memoryStats = *stats
 		}
+		m.refreshViewport()
 		return m, nil
 
 	case ExitMsg:
@@ -178,6 +190,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.AddMessage("system", fmt.Sprintf("工具执行结果: %s", msg.Result.Output))
 		m.AddMessage("assistant", "")
 		m.generating = true
+		m.refreshViewport()
 
 		// 构建包含工具结果的消息并重新请求AI
 		messages := m.buildMessages()
@@ -191,6 +204,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.AddMessage("system", fmt.Sprintf("工具执行错误: %v", msg.Err))
 		m.AddMessage("assistant", "")
 		m.generating = true
+		m.refreshViewport()
 
 		// 构建包含错误信息的消息并重新请求AI
 		messages := m.buildMessages()
@@ -201,195 +215,69 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if msg.Type == tea.KeyEsc && m.mode == ModeHelp {
+		m.mode = ModeChat
+		m.refreshViewport()
+		return *m, nil
+	}
+
 	switch msg.Type {
-
-	case tea.KeyEnter:
-		m.lastKeyWasEnter = true
-		return m.handleNewline()
-
 	case tea.KeyF5:
 		return m.handleSubmit()
 
 	case tea.KeyF8:
 		return m.handleSubmit()
 
+	case tea.KeyPgUp:
+		m.autoScroll = false
+		m.viewport.HalfViewUp()
+		return *m, nil
+
+	case tea.KeyPgDown:
+		m.viewport.HalfViewDown()
+		m.autoScroll = m.viewport.AtBottom()
+		return *m, nil
+
 	case tea.KeyUp:
-		if m.multilineMode {
-			m.moveCursorUp()
-			return *m, nil
-		}
-		if len(m.commandHistory) > 0 {
+		if strings.TrimSpace(m.textarea.Value()) == "" && len(m.commandHistory) > 0 {
 			if m.cmdHistIndex < len(m.commandHistory)-1 {
 				m.cmdHistIndex++
 			}
 			if m.cmdHistIndex >= 0 && m.cmdHistIndex < len(m.commandHistory) {
-				m.inputBuffer = m.commandHistory[len(m.commandHistory)-1-m.cmdHistIndex]
-				m.cursorLine = 0
-				m.cursorCol = len(m.inputBuffer)
+				m.textarea.SetValue(m.commandHistory[len(m.commandHistory)-1-m.cmdHistIndex])
+				m.textarea.CursorEnd()
+				return *m, nil
 			}
 		}
-		return *m, nil
-
 	case tea.KeyDown:
-		if m.multilineMode {
-			m.moveCursorDown()
-			return *m, nil
-		}
 		if m.cmdHistIndex > 0 {
 			m.cmdHistIndex--
-			m.inputBuffer = m.commandHistory[len(m.commandHistory)-1-m.cmdHistIndex]
-		} else {
+			m.textarea.SetValue(m.commandHistory[len(m.commandHistory)-1-m.cmdHistIndex])
+			m.textarea.CursorEnd()
+			return *m, nil
+		}
+		if m.cmdHistIndex == 0 {
 			m.cmdHistIndex = -1
-			m.inputBuffer = ""
-		}
-		return *m, nil
-
-	case tea.KeyLeft:
-		if m.multilineMode {
-			m.moveCursorLeft()
+			m.textarea.Reset()
 			return *m, nil
 		}
-		return *m, nil
-
-	case tea.KeyRight:
-		if m.multilineMode {
-			m.moveCursorRight()
-			return *m, nil
-		}
-		return *m, nil
-
-	case tea.KeyHome:
-		if m.multilineMode {
-			m.cursorCol = 0
-			return *m, nil
-		}
-		return *m, nil
-
-	case tea.KeyEnd:
-		if m.multilineMode {
-			lines := strings.Split(m.inputBuffer, "\n")
-			if m.cursorLine < len(lines) {
-				m.cursorCol = len(lines[m.cursorLine])
-			}
-			return *m, nil
-		}
-		return *m, nil
-
-	case tea.KeyDelete:
-		if m.multilineMode {
-			m.deleteCharAtCursor()
-			return *m, nil
-		}
-		return *m, nil
-
-	case tea.KeyTab:
-		if m.multilineMode {
-			m.insertAtCursor("\t")
-		} else {
-			m.inputBuffer += "\t"
-		}
-		return *m, nil
-
-	case tea.KeyRunes:
-		if m.lastKeyWasEnter {
-			m.lastKeyWasEnter = false
-			runes := msg.Runes
-			if len(runes) == 1 && runes[0] == 27 {
-				m.lastKeyWasEnter = false
-				return m.handleSubmit()
-			}
-		}
-
-		// 检测是否是粘贴事件（bracked paste mode）
-		pasteField := reflect.ValueOf(msg).FieldByName("Paste")
-		isPaste := pasteField.IsValid() && pasteField.Bool()
-
-		r := string(msg.Runes)
-
-		// 如果是粘贴，自动进入多行模式
-		if isPaste && !m.multilineMode && strings.Contains(r, "\n") {
-			m.enterMultilineMode()
-		}
-
-		if len(r) > 0 && (r[0] >= 32 || r[0] == 9) {
-			if m.multilineMode {
-				m.insertAtCursor(r)
-			} else {
-				m.inputBuffer += r
-				m.cursorCol++
-			}
-		} else if len(r) > 0 && r[0] < 32 && r[0] != 9 {
-			// 处理控制字符（如换行）
-			if r[0] == 10 || r[0] == 13 { // \n or \r
-				m.handleNewline()
-			}
-		}
-		m.cmdHistIndex = -1
-		return *m, nil
-
-	case tea.KeyBackspace:
-		if m.multilineMode {
-			m.backspaceAtCursor()
-		} else {
-			if len(m.inputBuffer) > 0 {
-				runes := []rune(m.inputBuffer)
-				m.inputBuffer = string(runes[:len(runes)-1])
-			}
-		}
-		return *m, nil
-
-	case tea.KeyEsc:
-		if m.mode == ModeHelp {
-			m.mode = ModeChat
-		}
-		return *m, nil
 	}
 
-	return *m, nil
-}
-
-func (m *Model) handleNewline() (tea.Model, tea.Cmd) {
-	if !m.multilineMode {
-		m.enterMultilineMode()
+	m.cmdHistIndex = -1
+	var inputCmd tea.Cmd
+	m.textarea, inputCmd = m.textarea.Update(msg)
+	m.refreshViewport()
+	if m.viewport.AtBottom() {
+		m.autoScroll = true
 	}
-
-	lines := strings.Split(m.inputBuffer, "\n")
-	if m.cursorLine < len(lines) {
-		line := lines[m.cursorLine]
-		runes := []rune(line)
-
-		if m.cursorCol > len(runes) {
-			m.cursorCol = len(runes)
-		}
-
-		before := string(runes[:m.cursorCol])
-		after := string(runes[m.cursorCol:])
-
-		lines[m.cursorLine] = before
-
-		newLines := make([]string, 0, len(lines)+1)
-		newLines = append(newLines, lines[:m.cursorLine+1]...)
-		newLines = append(newLines, after)
-		if m.cursorLine < len(lines)-1 {
-			newLines = append(newLines, lines[m.cursorLine+1:]...)
-		}
-
-		m.inputBuffer = strings.Join(newLines, "\n")
-	} else {
-		m.inputBuffer += "\n"
-	}
-	m.cursorLine++
-	m.cursorCol = 0
-	return *m, nil
+	return *m, inputCmd
 }
 
 func (m *Model) handleSubmit() (tea.Model, tea.Cmd) {
-	m.multilineMode = false
-	m.cursorLine = 0
-	m.cursorCol = 0
-
-	input := strings.TrimSpace(m.inputBuffer)
-	m.inputBuffer = ""
+	input := strings.TrimSpace(m.textarea.Value())
+	m.textarea.Reset()
+	m.textarea.SetHeight(m.calculateInputHeight())
+	m.syncLayout()
 
 	if input == "" {
 		return *m, nil
@@ -414,6 +302,8 @@ func (m *Model) handleSubmit() (tea.Model, tea.Cmd) {
 	// 在请求发出前先裁剪原始消息，避免 UI 历史无限扩张并影响短期上下文质量。
 	m.TrimHistory(m.historyTurns)
 	m.generating = true
+	m.autoScroll = true
+	m.refreshViewport()
 
 	m.commandHistory = append(m.commandHistory, input)
 	m.cmdHistIndex = -1
@@ -615,6 +505,7 @@ func (m *Model) handleCommand(input string) (tea.Model, tea.Cmd) {
 	default:
 		m.AddMessage("assistant", fmt.Sprintf("未知命令: %s，输入 /help 查看帮助", cmd))
 	}
+	m.refreshViewport()
 
 	return *m, nil
 }
@@ -727,6 +618,8 @@ func (m *Model) sendCodeToAI(code string) tea.Cmd {
 	m.AddMessage("assistant", "")
 	m.TrimHistory(m.historyTurns)
 	m.generating = true
+	m.autoScroll = true
+	m.refreshViewport()
 
 	messages := m.buildMessages()
 	return m.streamResponse(messages)
@@ -811,138 +704,49 @@ func detectLanguage(code string) (string, string) {
 	return "", ""
 }
 
-func (m *Model) moveCursorUp() {
-	if m.cursorLine > 0 {
-		m.cursorLine--
-		lines := strings.Split(m.inputBuffer, "\n")
-		if m.cursorLine < len(lines) {
-			lineRunes := utf8.RuneCountInString(lines[m.cursorLine])
-			if m.cursorCol > lineRunes {
-				m.cursorCol = lineRunes
-			}
-		}
+func (m *Model) calculateInputHeight() int {
+	lines := strings.Count(m.textarea.Value(), "\n") + 1
+	if lines < 3 {
+		return 3
 	}
+	if lines > 8 {
+		return 8
+	}
+	return lines
 }
 
-func (m *Model) moveCursorDown() {
-	lines := strings.Split(m.inputBuffer, "\n")
-	if m.cursorLine < len(lines)-1 {
-		m.cursorLine++
-		lineRunes := utf8.RuneCountInString(lines[m.cursorLine])
-		if m.cursorCol > lineRunes {
-			m.cursorCol = lineRunes
-		}
-	}
-}
-
-func (m *Model) moveCursorLeft() {
-	if m.cursorLine == 0 && m.cursorCol == 0 {
+func (m *Model) syncLayout() {
+	if m.width <= 0 || m.height <= 0 {
 		return
 	}
-	if m.cursorCol > 0 {
-		m.cursorCol--
-	} else if m.cursorLine > 0 {
-		m.cursorLine--
-		lines := strings.Split(m.inputBuffer, "\n")
-		m.cursorCol = utf8.RuneCountInString(lines[m.cursorLine])
+	inputWidth := m.width
+	if inputWidth < 20 {
+		inputWidth = 20
 	}
+	m.textarea.SetWidth(inputWidth)
+	m.textarea.SetHeight(m.calculateInputHeight())
+	m.textarea.Prompt = "┃ "
+
+	statusHeight := 1
+	inputHeight := m.textarea.Height() + 2
+	helpHeight := 0
+	if m.mode == ModeHelp {
+		helpHeight = minInt(20, m.height-statusHeight-3)
+	}
+	contentHeight := m.height - statusHeight - inputHeight - helpHeight
+	if contentHeight < 3 {
+		contentHeight = 3
+	}
+	m.viewport.Width = m.width
+	m.viewport.Height = contentHeight
 }
 
-func (m *Model) moveCursorRight() {
-	lines := strings.Split(m.inputBuffer, "\n")
-	currentLineLen := utf8.RuneCountInString(lines[m.cursorLine])
-	if m.cursorCol < currentLineLen {
-		m.cursorCol++
-	} else if m.cursorLine < len(lines)-1 {
-		m.cursorLine++
-		m.cursorCol = 0
+func (m *Model) refreshViewport() {
+	m.syncLayout()
+	content := m.renderChatContent()
+	m.viewport.SetContent(content)
+	if m.autoScroll || m.viewport.AtBottom() {
+		m.viewport.GotoBottom()
+		m.autoScroll = true
 	}
-}
-
-func (m *Model) insertAtCursor(text string) {
-	lines := strings.Split(m.inputBuffer, "\n")
-	if m.cursorLine >= len(lines) {
-		m.inputBuffer += text
-		m.cursorLine = len(lines) - 1
-		m.cursorCol = utf8.RuneCountInString(lines[m.cursorLine])
-		return
-	}
-
-	line := lines[m.cursorLine]
-	runes := []rune(line)
-	if m.cursorCol > len(runes) {
-		m.cursorCol = len(runes)
-	}
-	before := string(runes[:m.cursorCol])
-	after := string(runes[m.cursorCol:])
-	lines[m.cursorLine] = before + text + after
-	m.inputBuffer = strings.Join(lines, "\n")
-	m.cursorCol += utf8.RuneCountInString(text)
-}
-
-func (m *Model) deleteCharAtCursor() {
-	lines := strings.Split(m.inputBuffer, "\n")
-	if m.cursorLine >= len(lines) {
-		return
-	}
-
-	line := lines[m.cursorLine]
-	runes := []rune(line)
-
-	if m.cursorCol > len(runes) {
-		m.cursorCol = len(runes)
-	}
-
-	if m.cursorCol < len(runes) {
-		runes = append(runes[:m.cursorCol], runes[m.cursorCol+1:]...)
-		lines[m.cursorLine] = string(runes)
-		m.inputBuffer = strings.Join(lines, "\n")
-	} else if m.cursorLine < len(lines)-1 {
-		lines[m.cursorLine] = line + lines[m.cursorLine+1]
-		lines = append(lines[:m.cursorLine+1], lines[m.cursorLine+2:]...)
-		m.inputBuffer = strings.Join(lines, "\n")
-	}
-}
-
-func (m *Model) backspaceAtCursor() {
-	if m.cursorLine == 0 && m.cursorCol == 0 {
-		return
-	}
-
-	lines := strings.Split(m.inputBuffer, "\n")
-
-	if m.cursorCol > 0 {
-		line := lines[m.cursorLine]
-		runes := []rune(line)
-
-		if m.cursorCol > len(runes) {
-			m.cursorCol = len(runes)
-		}
-
-		if m.cursorCol > 0 {
-			runes = append(runes[:m.cursorCol-1], runes[m.cursorCol:]...)
-			lines[m.cursorLine] = string(runes)
-			m.inputBuffer = strings.Join(lines, "\n")
-			m.cursorCol--
-		}
-	} else if m.cursorLine > 0 {
-		lines = strings.Split(m.inputBuffer, "\n")
-		m.cursorLine--
-		m.cursorCol = utf8.RuneCountInString(lines[m.cursorLine])
-		lines[m.cursorLine] = lines[m.cursorLine] + lines[m.cursorLine+1]
-		lines = append(lines[:m.cursorLine+1], lines[m.cursorLine+2:]...)
-		m.inputBuffer = strings.Join(lines, "\n")
-	}
-}
-
-func (m *Model) enterMultilineMode() {
-	m.multilineMode = true
-	m.cursorLine = 0
-	m.cursorCol = utf8.RuneCountInString(m.inputBuffer)
-}
-
-func (m *Model) exitMultilineMode() {
-	m.multilineMode = false
-	m.cursorLine = 0
-	m.cursorCol = 0
 }
