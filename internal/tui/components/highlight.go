@@ -235,8 +235,11 @@ func hasKeywordByRune(runes []rune, pos int, kw string) bool {
 func Tokenize(code string, lang string) []Token {
 	tokens := []Token{}
 	lines := strings.Split(code, "\n")
-	for _, line := range lines {
+	for i, line := range lines {
 		tokens = append(tokens, tokenizeLine(line, lang)...)
+		if i < len(lines)-1 {
+			tokens = append(tokens, Token{Type: TokenDefault, Content: "\n"})
+		}
 	}
 	return tokens
 }

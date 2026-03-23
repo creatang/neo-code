@@ -20,7 +20,6 @@ import (
 
 func main() {
 	setUTF8Mode()
-	loadDotEnv(".env")
 
 	scanner := bufio.NewScanner(os.Stdin)
 	ready, err := ensureAPIKeyInteractive(context.Background(), scanner, "config.yaml")

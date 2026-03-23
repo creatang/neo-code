@@ -27,21 +27,17 @@ func RenderContent(content string, width int) string {
 	var codeLines []string
 
 	for _, line := range lines {
-		if strings.HasPrefix(line, "```") {
+		trimmedLine := strings.TrimSpace(line)
+		if isFenceLine(trimmedLine) {
 			if !inCodeBlock {
 				inCodeBlock = true
-				codeLang = strings.TrimPrefix(line, "```")
-				codeLang = strings.TrimSpace(codeLang)
-				if codeLang == "" {
-					codeLang = "go"
-				}
+				codeLang = parseFenceLanguage(trimmedLine)
 				codeLines = []string{}
 				b.WriteString("\n")
 			} else {
 				inCodeBlock = false
-				highlighted := HighlightCodeBlock(codeLines, codeLang, width)
+				highlighted := HighlightCodeBlock(codeLines, codeLang, width, true)
 				b.WriteString(highlighted)
-				b.WriteString(codeBlockStyle.Render("```\n"))
 				codeLines = nil
 			}
 			continue
@@ -55,22 +51,42 @@ func RenderContent(content string, width int) string {
 		}
 	}
 
-	return b.String()
-}
-
-func HighlightCodeBlock(lines []string, lang string, width int) string {
-	var b strings.Builder
-	code := strings.Join(lines, "\n")
-
-	b.WriteString(codeBlockStyle.Render("```" + lang + "\n"))
-
-	highlighted := HighlightCode(code, lang)
-	highlightedLines := strings.Split(highlighted, "\n")
-	lineStyle := lipgloss.NewStyle().MaxWidth(width)
-	for _, line := range highlightedLines {
-		b.WriteString(codeBlockStyle.Render(lineStyle.Render(line)))
-		b.WriteString("\n")
+	if inCodeBlock {
+		highlighted := HighlightCodeBlock(codeLines, codeLang, width, false)
+		b.WriteString(highlighted)
 	}
 
 	return b.String()
+}
+
+func HighlightCodeBlock(lines []string, lang string, width int, closed bool) string {
+	var b strings.Builder
+	code := strings.Join(lines, "\n")
+	resolvedLang := strings.TrimSpace(lang)
+	if resolvedLang == "" {
+		resolvedLang = DetectLanguage(code)
+	}
+
+	highlighted := HighlightCode(code, resolvedLang)
+	b.WriteString("```")
+	b.WriteString(resolvedLang)
+	b.WriteString("\n")
+	b.WriteString(highlighted)
+	if !strings.HasSuffix(highlighted, "\n") {
+		b.WriteString("\n")
+	}
+	if closed {
+		b.WriteString("```\n")
+	}
+
+	blockStyle := codeBlockStyle.MaxWidth(width)
+	return blockStyle.Render(b.String()) + "\n"
+}
+
+func isFenceLine(line string) bool {
+	return strings.HasPrefix(line, "```")
+}
+
+func parseFenceLanguage(line string) string {
+	return strings.TrimSpace(strings.TrimPrefix(line, "```"))
 }

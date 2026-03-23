@@ -100,12 +100,13 @@ func LoadAppConfig(filePath string) error {
 func LoadBootstrapConfig(filePath string) (*AppConfiguration, error) {
 	data, err := os.ReadFile(filePath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read app config file: %w", err)
+		return nil, fmt.Errorf("读取配置文件时出错: %w", err)
 	}
 
 	cfg := DefaultAppConfig()
+	//解析data数据覆盖到cfg上
 	if err := yaml.Unmarshal(data, cfg); err != nil {
-		return nil, fmt.Errorf("failed to parse app config YAML: %w", err)
+		return nil, fmt.Errorf("解析yaml信息失败: %w", err)
 	}
 	if err := cfg.ValidateBase(); err != nil {
 		return nil, err
@@ -119,7 +120,7 @@ func EnsureConfigFile(filePath string) (*AppConfiguration, bool, error) {
 		cfg, loadErr := LoadBootstrapConfig(filePath)
 		return cfg, false, loadErr
 	} else if !errors.Is(err, os.ErrNotExist) {
-		return nil, false, fmt.Errorf("failed to stat app config file: %w", err)
+		return nil, false, fmt.Errorf("文件不存在: %w", err)
 	}
 
 	cfg := DefaultAppConfig()
@@ -132,16 +133,16 @@ func EnsureConfigFile(filePath string) (*AppConfiguration, bool, error) {
 // WriteAppConfig 将应用配置写入磁盘。
 func WriteAppConfig(filePath string, cfg *AppConfiguration) error {
 	if cfg == nil {
-		return fmt.Errorf("app config is nil")
+		return fmt.Errorf("配置信息为空")
 	}
 	cfgCopy := *cfg
 	cfgCopy.AI.APIKey = strings.TrimSpace(cfgCopy.AI.APIKey)
 	data, err := yaml.Marshal(&cfgCopy)
 	if err != nil {
-		return fmt.Errorf("failed to marshal app config YAML: %w", err)
+		return fmt.Errorf("序列化yaml信息时错误: %w", err)
 	}
 	if err := os.WriteFile(filePath, data, 0o644); err != nil {
-		return fmt.Errorf("failed to write app config file: %w", err)
+		return fmt.Errorf("向yaml文件写入配置信息时错误: %w", err)
 	}
 	return nil
 }
@@ -248,14 +249,6 @@ func RuntimeAPIKey() string {
 	return strings.TrimSpace(os.Getenv(DefaultAPIKeyEnvVar))
 }
 
-// GetChatModelURL 从全局配置中查找聊天模型对应的 URL。
-func GetChatModelURL(modelName string) (string, bool) {
-	if GlobalAppConfig == nil {
-		return "", false
-	}
-	return GetChatModelURLFromConfig(GlobalAppConfig, modelName)
-}
-
 // GetChatModelURLFromConfig 从指定配置中查找聊天模型对应的 URL。
 func GetChatModelURLFromConfig(cfg *AppConfiguration, modelName string) (string, bool) {
 	if cfg == nil {
@@ -267,14 +260,6 @@ func GetChatModelURLFromConfig(cfg *AppConfiguration, modelName string) (string,
 		}
 	}
 	return "", false
-}
-
-// GetDefaultChatModel 返回全局配置中的默认聊天模型。
-func GetDefaultChatModel() string {
-	if GlobalAppConfig == nil {
-		return ""
-	}
-	return strings.TrimSpace(GlobalAppConfig.Models.Chat.DefaultModel)
 }
 
 func normalizeProviderName(name string) string {

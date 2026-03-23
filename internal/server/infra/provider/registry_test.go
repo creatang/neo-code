@@ -15,6 +15,7 @@ func TestNormalizeProviderName(t *testing.T) {
 	tests := map[string]string{
 		"modelscope":  "modelscope",
 		"DEEPSEEK":    "deepseek",
+		"OPENLL":      "openll",
 		"siliconflow": "siliconflow",
 		"豆包大模型":       "豆包大模型",
 		"openai":      "openai",
@@ -60,6 +61,16 @@ func TestResolveChatEndpoint(t *testing.T) {
 		t.Fatalf("expected openai endpoint, got error: %v", err)
 	}
 	if want := "https://api.openai.com/v1/chat/completions"; url != want {
+		t.Fatalf("expected endpoint %q, got %q", want, url)
+	}
+
+	cfg.AI.Provider = "openll"
+	cfg.AI.Model = "gpt-4o-mini"
+	url, err = ResolveChatEndpoint(cfg, cfg.AI.Model)
+	if err != nil {
+		t.Fatalf("expected openll endpoint, got error: %v", err)
+	}
+	if want := "https://www.openll.top/v1/chat/completions"; url != want {
 		t.Fatalf("expected endpoint %q, got %q", want, url)
 	}
 }

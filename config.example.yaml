@@ -4,7 +4,7 @@ app:
   version: "1.0.0"
 
 ai:
-  provider: "modelscope" # modelscope | deepseek | siliconflow | 豆包大模型 | openai
+  provider: "modelscope" # modelscope | deepseek | openll | siliconflow | 豆包大模型 | openai
   api_key: "AI_API_KEY" # environment variable name; falls back to AI_API_KEY when empty
   model: "Qwen/Qwen3-Coder-480B-A35B-Instruct"
 
@@ -41,5 +41,5 @@ models:
 
 # Notes:
 # - /models only shows the built-in list when provider=modelscope.
-# - For deepseek, siliconflow, 豆包大模型, and openai, please set ai.model yourself
+# - For deepseek, openll, siliconflow, 豆包大模型, and openai, please set ai.model yourself
 #   in config.yaml or by running /switch <model>.
