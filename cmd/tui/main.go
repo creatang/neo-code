@@ -12,10 +12,7 @@ import (
 	"go-llm-demo/configs"
 	"go-llm-demo/internal/server/infra/provider"
 	"go-llm-demo/internal/server/infra/tools"
-	"go-llm-demo/internal/tui/core"
-	"go-llm-demo/internal/tui/infra"
-
-	tea "github.com/charmbracelet/bubbletea"
+	"go-llm-demo/internal/tui/bootstrap"
 )
 
 func main() {
@@ -58,17 +55,11 @@ func main() {
 	}
 	historyTurns := configs.GlobalAppConfig.History.ShortTermTurns
 
-	client, err := infra.NewLocalChatClient()
+	p, err := bootstrap.NewProgram(persona, historyTurns, "config.yaml", workspaceRoot)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "初始化失败: %v\n", err)
 		os.Exit(1)
 	}
-
-	model := core.NewModel(client, persona, historyTurns, "config.yaml", workspaceRoot)
-	p := tea.NewProgram(model,
-		tea.WithAltScreen(),
-		tea.WithMouseCellMotion(),
-	)
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "运行失败: %v\n", err)
 		os.Exit(1)
