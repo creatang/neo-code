@@ -6,7 +6,8 @@ import (
 	"time"
 
 	"go-llm-demo/configs"
-	"go-llm-demo/internal/tui/infra"
+	"go-llm-demo/internal/tui/services"
+	"go-llm-demo/internal/tui/state"
 
 	"github.com/charmbracelet/bubbles/cursor"
 	"github.com/charmbracelet/bubbles/textarea"
@@ -15,62 +16,26 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-type Mode int
-
-const (
-	ModeChat Mode = iota
-	ModeCodeInput
-	ModeHelp
-	ModeMemory
-)
-
 type Model struct {
-	width   int
-	height  int
-	mode    Mode
-	focused string
+	ui   state.UIState
+	chat state.ChatState
 
-	messages     []Message
-	historyTurns int
-
-	generating  bool
-	activeModel string
-
-	memoryStats infra.MemoryStats
-
-	commandHistory []string
-	cmdHistIndex   int
-
-	client  infra.ChatClient
+	client  services.ChatClient
 	persona string
-
-	workspaceRoot string
-
-	toolExecuting bool
-	apiKeyReady   bool
-	configPath    string
 
 	streamChan <-chan string
 	textarea   textarea.Model
 	viewport   viewport.Model
-	autoScroll bool
 
 	mu *sync.Mutex
 }
 
-type Message struct {
-	Role      string
-	Content   string
-	Timestamp time.Time
-	Streaming bool
-}
-
 // NewModel 创建 TUI 状态模型。
 // historyTurns 用于限制发送给后端的短期对话轮数，避免原始消息无限增长。
-func NewModel(client infra.ChatClient, persona string, historyTurns int, configPath, workspaceRoot string) Model {
+func NewModel(client services.ChatClient, persona string, historyTurns int, configPath, workspaceRoot string) Model {
 	stats, _ := client.GetMemoryStats(context.Background())
 	if stats == nil {
-		stats = &infra.MemoryStats{}
+		stats = &services.MemoryStats{}
 	}
 	if historyTurns <= 0 {
 		historyTurns = 6
@@ -99,23 +64,27 @@ func NewModel(client infra.ChatClient, persona string, historyTurns int, configP
 	vp.SetContent("")
 
 	return Model{
-		mode:           ModeChat,
-		focused:        "input",
-		messages:       make([]Message, 0),
-		historyTurns:   historyTurns,
-		activeModel:    client.DefaultModel(),
-		memoryStats:    *stats,
-		commandHistory: make([]string, 0),
-		cmdHistIndex:   -1,
-		client:         client,
-		persona:        persona,
-		workspaceRoot:  workspaceRoot,
-		apiKeyReady:    configs.RuntimeAPIKey() != "",
-		configPath:     configPath,
-		textarea:       input,
-		viewport:       vp,
-		autoScroll:     true,
-		mu:             &sync.Mutex{},
+		ui: state.UIState{
+			Mode:       state.ModeChat,
+			Focused:    "input",
+			AutoScroll: true,
+		},
+		chat: state.ChatState{
+			Messages:       make([]state.Message, 0),
+			HistoryTurns:   historyTurns,
+			ActiveModel:    client.DefaultModel(),
+			MemoryStats:    *stats,
+			CommandHistory: make([]string, 0),
+			CmdHistIndex:   -1,
+			WorkspaceRoot:  workspaceRoot,
+			APIKeyReady:    configs.RuntimeAPIKey() != "",
+			ConfigPath:     configPath,
+		},
+		client:   client,
+		persona:  persona,
+		textarea: input,
+		viewport: vp,
+		mu:       &sync.Mutex{},
 	}
 }
 
@@ -133,12 +102,12 @@ func (m Model) Init() tea.Cmd {
 
 // SetWidth 更新当前视口宽度。
 func (m *Model) SetWidth(w int) {
-	m.width = w
+	m.ui.Width = w
 }
 
 // SetHeight 更新当前视口高度。
 func (m *Model) SetHeight(h int) {
-	m.height = h
+	m.ui.Height = h
 }
 
 // AddMessage 向聊天历史追加一条带时间戳的消息。
@@ -146,7 +115,7 @@ func (m *Model) AddMessage(role, content string) {
 	mu := m.mutex()
 	mu.Lock()
 	defer mu.Unlock()
-	m.messages = append(m.messages, Message{
+	m.chat.Messages = append(m.chat.Messages, state.Message{
 		Role:      role,
 		Content:   content,
 		Timestamp: time.Now(),
@@ -158,8 +127,8 @@ func (m *Model) AppendLastMessage(content string) {
 	mu := m.mutex()
 	mu.Lock()
 	defer mu.Unlock()
-	if len(m.messages) > 0 {
-		m.messages[len(m.messages)-1].Content += content
+	if len(m.chat.Messages) > 0 {
+		m.chat.Messages[len(m.chat.Messages)-1].Content += content
 	}
 }
 
@@ -168,8 +137,8 @@ func (m *Model) FinishLastMessage() {
 	mu := m.mutex()
 	mu.Lock()
 	defer mu.Unlock()
-	if len(m.messages) > 0 {
-		m.messages[len(m.messages)-1].Streaming = false
+	if len(m.chat.Messages) > 0 {
+		m.chat.Messages[len(m.chat.Messages)-1].Streaming = false
 	}
 }
 
@@ -178,14 +147,14 @@ func (m *Model) TrimHistory(maxTurns int) {
 	mu := m.mutex()
 	mu.Lock()
 	defer mu.Unlock()
-	if len(m.messages) <= maxTurns*2 {
+	if len(m.chat.Messages) <= maxTurns*2 {
 		return
 	}
 
-	var system []Message
-	var others []Message
+	var system []state.Message
+	var others []state.Message
 
-	for _, msg := range m.messages {
+	for _, msg := range m.chat.Messages {
 		if msg.Role == "system" {
 			system = append(system, msg)
 		} else {
@@ -197,5 +166,5 @@ func (m *Model) TrimHistory(maxTurns int) {
 		others = others[len(others)-maxTurns*2:]
 	}
 
-	m.messages = append(system, others...)
+	m.chat.Messages = append(system, others...)
 }
