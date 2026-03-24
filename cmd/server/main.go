@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"path/filepath"
 
 	"go-llm-demo/configs"
 	"go-llm-demo/internal/server/infra/provider"
@@ -18,6 +19,10 @@ func main() {
 	}
 	if err := tools.SetWorkspaceRoot(workspaceRoot); err != nil {
 		fmt.Printf("设置工作区失败：%v\n", err)
+		return
+	}
+	if err := initializeSecurity(filepath.Join(workspaceRoot, "configs", "security")); err != nil {
+		fmt.Printf("初始化安全策略失败：%v\n", err)
 		return
 	}
 
@@ -53,4 +58,14 @@ func main() {
 	chatGateway := service.NewChatService(memorySvc, workingSvc, roleSvc, chatProvider)
 	fmt.Printf("Server initialized with services: %+v\n", chatGateway)
 	fmt.Println("Note: This is a placeholder. Actual server implementation goes here.")
+}
+
+func initializeSecurity(configDir string) error {
+	securityRepo := repository.NewSecurityConfigRepository()
+	securitySvc := service.NewSecurityService(securityRepo)
+	if err := securitySvc.Initialize(configDir); err != nil {
+		return err
+	}
+	tools.SetSecurityChecker(securitySvc)
+	return nil
 }
