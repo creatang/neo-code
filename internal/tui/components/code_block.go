@@ -35,6 +35,7 @@ func RenderContent(content string, width int) string {
 				codeLines = []string{}
 				b.WriteString("\n")
 			} else {
+				// 围栏闭合时才统一高亮，避免逐行渲染打断终端样式。
 				inCodeBlock = false
 				highlighted := HighlightCodeBlock(codeLines, codeLang, width, true)
 				b.WriteString(highlighted)
@@ -52,6 +53,7 @@ func RenderContent(content string, width int) string {
 	}
 
 	if inCodeBlock {
+		// 模型流式输出时经常会出现“代码块还没闭合”的中间态，这里也尽量渲染已有内容。
 		highlighted := HighlightCodeBlock(codeLines, codeLang, width, false)
 		b.WriteString(highlighted)
 	}

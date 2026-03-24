@@ -42,6 +42,7 @@ func (s *chatServiceImpl) Send(ctx context.Context, req *domain.ChatRequest) (<-
 		}
 
 		if !hasSystem {
+			// 角色提示总是放在最前面的 system 消息里，便于后续继续叠加记忆上下文。
 			messages = append([]domain.Message{{Role: "system", Content: rolePrompt}}, messages...)
 		}
 	}
@@ -61,6 +62,8 @@ func (s *chatServiceImpl) Send(ctx context.Context, req *domain.ChatRequest) (<-
 		}
 		combinedContext := joinContextBlocks(workingContext, memoryContext)
 		if combinedContext != "" {
+			// 如果前面已经注入了 role prompt，则把工作记忆和长期记忆继续拼到同一条 system 消息中，
+			// 避免生成多条 system 消息打乱提示优先级。
 			if rolePrompt != "" && len(messages) > 0 && messages[0].Role == "system" {
 				messages[0].Content = rolePrompt + "\n\n" + combinedContext
 			} else {
@@ -92,6 +95,8 @@ func (s *chatServiceImpl) Send(ctx context.Context, req *domain.ChatRequest) (<-
 
 		if s.latestUserInput(messages) != "" && replyBuilder.Len() > 0 {
 			if s.workingSvc != nil {
+				// 工作记忆刷新要基于用户原始消息序列，而不是注入过 system 上下文后的 messages，
+				// 否则会把内部提示也误当成真实对话历史。
 				updatedMessages := append([]domain.Message{}, req.Messages...)
 				updatedMessages = append(updatedMessages, domain.Message{Role: "assistant", Content: replyBuilder.String()})
 				if err := s.workingSvc.Refresh(context.Background(), updatedMessages); err != nil {

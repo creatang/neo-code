@@ -73,7 +73,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		mu.Unlock()
 
-		// 检查最后一条AI消息是否为JSON格式的工具调用
+		// 当前工具协议约定：模型如果想调用工具，需要把最后一条 assistant 消息完整输出为
+		// {"tool":"...","params":{...}} 结构。这里在流结束后统一解析，避免半截 JSON 被误触发。
 		if shouldCheckToolCall {
 			var jsonData map[string]interface{}
 			if err := json.Unmarshal([]byte(lastContent), &jsonData); err == nil {
@@ -530,6 +531,8 @@ func (m *Model) buildMessages() []infra.Message {
 	mu.Lock()
 	defer mu.Unlock()
 	result := make([]infra.Message, 0, len(m.messages))
+	// 工具结果会被注入成 system 上下文，但只保留最近几条，
+	// 否则连续工具链很容易把真正的对话历史挤出上下文窗口。
 	keepToolContextIndex := recentToolContextIndexes(m.messages, maxToolContextMessages)
 
 	// 按照消息的原始时间顺序进行迭代
@@ -637,6 +640,8 @@ func formatToolContextMessage(result *tools.ToolResult) string {
 		return toolContextPrefix + "\n" + "tool=unknown\n" + "success=false\n" + "error:\n工具返回为空"
 	}
 
+	// 这里故意使用稳定的纯文本 key/value 结构，而不是直接把 ToolResult 原样塞回模型：
+	// 一方面更容易截断超长输出，另一方面也能减少不同工具返回格式带来的歧义。
 	builder := strings.Builder{}
 	builder.WriteString(toolContextPrefix)
 	builder.WriteString("\n")

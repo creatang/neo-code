@@ -9,6 +9,8 @@ import (
 	"go-llm-demo/internal/server/domain"
 )
 
+// fileRefPattern 只做轻量文件线索提取：允许相对路径、绝对路径前缀和常见文件名。
+// 这里宁可多抓一些候选，也不在工作记忆阶段做过重的路径校验。
 var fileRefPattern = regexp.MustCompile(`(?i)(?:[a-z]:\\|\./|\.\\|/)?[a-z0-9_./\\-]+\.[a-z0-9]+`)
 
 type workingMemoryServiceImpl struct {
@@ -81,6 +83,8 @@ func collectRecentTurns(messages []domain.Message) []domain.WorkingMemoryTurn {
 		case "user":
 			pendingUser = strings.TrimSpace(msg.Content)
 		case "assistant":
+			// 工作记忆按“一条 user + 下一条 assistant”配对，
+			// 这样即使中间混有 system/tool 消息，也不会污染最近轮次摘要。
 			assistant := strings.TrimSpace(msg.Content)
 			if pendingUser == "" && assistant == "" {
 				continue
@@ -149,6 +153,7 @@ func collectRecentFiles(messages []domain.Message, limit int) []string {
 	for i := len(messages) - 1; i >= 0 && len(files) < limit; i-- {
 		matches := fileRefPattern.FindAllString(messages[i].Content, -1)
 		for _, match := range matches {
+			// 统一成斜杠路径，便于后续去重和直接注入 prompt。
 			normalized := strings.TrimSpace(strings.ReplaceAll(match, "\\", "/"))
 			if normalized == "" {
 				continue
