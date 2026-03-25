@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"testing"
 
 	"go-llm-demo/configs"
@@ -65,6 +66,23 @@ func TestInitReturnsNonNilCmd(t *testing.T) {
 	}
 }
 
+func TestNewModelAddsResumeSummaryMessageWhenSupported(t *testing.T) {
+	restoreCoreGlobals(t)
+
+	client := &resumeSummaryClient{
+		fakeChatClient: fakeChatClient{defaultModelName: "demo-model"},
+		summary:        "已恢复上次工作现场：\n- 当前目标: 修复记忆模块",
+	}
+
+	m := NewModel(client, "persona", 4, "config.yaml", "D:/neo-code")
+	if len(m.chat.Messages) != 1 {
+		t.Fatalf("expected one resume summary message, got %+v", m.chat.Messages)
+	}
+	if m.chat.Messages[0].Role != "system" || !isResumeSummaryMessage(m.chat.Messages[0].Content) {
+		t.Fatalf("expected resume summary system message, got %+v", m.chat.Messages[0])
+	}
+}
+
 func TestTrimHistoryKeepsSystemMessagesAndLatestTurns(t *testing.T) {
 	m := Model{}
 	m.chat.Messages = []state.Message{
@@ -88,4 +106,13 @@ func TestTrimHistoryKeepsSystemMessagesAndLatestTurns(t *testing.T) {
 	if m.chat.Messages[1].Content != "u2" || m.chat.Messages[4].Content != "a3" {
 		t.Fatalf("expected only latest turns to remain, got %+v", m.chat.Messages)
 	}
+}
+
+type resumeSummaryClient struct {
+	fakeChatClient
+	summary string
+}
+
+func (c *resumeSummaryClient) GetWorkingSessionSummary(context.Context) (string, error) {
+	return c.summary, nil
 }

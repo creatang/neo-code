@@ -44,6 +44,11 @@ type ChatClient interface {
 	DefaultModel() string
 }
 
+// WorkingSessionSummaryProvider 为支持恢复摘要的客户端扩展接口。
+type WorkingSessionSummaryProvider interface {
+	GetWorkingSessionSummary(ctx context.Context) (string, error)
+}
+
 // MemoryStats 是 TUI 展示 memory 面板所需的聚合统计信息。
 type MemoryStats struct {
 	PersistentItems int
@@ -78,9 +83,14 @@ func NewLocalChatClient() (ChatClient, error) {
 	if maxItems <= 0 {
 		maxItems = 1000
 	}
+	workspaceRoot := tools.GetWorkspaceRoot()
 	persistentRepo := repository.NewFileMemoryStore(storePath, maxItems)
 	sessionRepo := repository.NewSessionMemoryStore(maxItems)
-	workingRepo := repository.NewWorkingMemoryStore()
+	workingStatePath := ""
+	if cfg.History.PersistSessionState {
+		workingStatePath = BuildWorkspaceStatePath(cfg.History.WorkspaceStateDir, workspaceRoot)
+	}
+	workingRepo := repository.NewWorkingMemoryStore(workingStatePath)
 	memorySvc := service.NewMemoryService(
 		persistentRepo,
 		sessionRepo,
@@ -90,7 +100,7 @@ func NewLocalChatClient() (ChatClient, error) {
 		storePath,
 		cfg.Memory.PersistTypes,
 	)
-	workingSvc := service.NewWorkingMemoryService(workingRepo, cfg.History.ShortTermTurns, tools.GetWorkspaceRoot())
+	workingSvc := service.NewWorkingMemoryService(workingRepo, cfg.History.ShortTermTurns, workspaceRoot)
 
 	roleRepo := repository.NewFileRoleStore("./data/roles.json")
 	roleSvc := service.NewRoleService(roleRepo, strings.TrimSpace(cfg.Persona.FilePath))
@@ -187,4 +197,43 @@ func (c *localChatClient) RemoveTodo(ctx context.Context, id string) error {
 // DefaultModel 返回 TUI 使用的默认模型。
 func (c *localChatClient) DefaultModel() string {
 	return provider.DefaultModelForConfig(c.config)
+}
+
+// GetWorkingSessionSummary 返回当前工作区上次保存的会话摘要。
+func (c *localChatClient) GetWorkingSessionSummary(ctx context.Context) (string, error) {
+	if c.workingSvc == nil || c.config == nil || !c.config.History.ResumeLastSession {
+		return "", nil
+	}
+	state, err := c.workingSvc.Get(ctx)
+	if err != nil || state == nil {
+		return "", err
+	}
+	return formatWorkingSessionSummary(state), nil
+}
+
+func formatWorkingSessionSummary(state *domain.WorkingMemoryState) string {
+	if state == nil {
+		return ""
+	}
+	lines := make([]string, 0, 6)
+	if strings.TrimSpace(state.CurrentTask) != "" {
+		lines = append(lines, "已恢复上次工作现场：")
+		lines = append(lines, "- 当前目标: "+domain.SummarizeText(state.CurrentTask, 120))
+	}
+	if strings.TrimSpace(state.LastCompletedAction) != "" {
+		lines = append(lines, "- 上次完成: "+domain.SummarizeText(state.LastCompletedAction, 120))
+	}
+	if strings.TrimSpace(state.CurrentInProgress) != "" {
+		lines = append(lines, "- 当前进行中: "+domain.SummarizeText(state.CurrentInProgress, 120))
+	}
+	if strings.TrimSpace(state.NextStep) != "" {
+		lines = append(lines, "- 下一步: "+domain.SummarizeText(state.NextStep, 120))
+	}
+	if len(state.RecentFiles) > 0 {
+		lines = append(lines, "- 最近文件: "+strings.Join(state.RecentFiles, ", "))
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	return strings.Join(lines, "\n")
 }

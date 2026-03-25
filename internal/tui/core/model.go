@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"time"
 
@@ -38,6 +39,8 @@ type Model struct {
 	todoCursor int
 }
 
+const resumeSummaryPrefix = "[RESUME_SUMMARY]"
+
 // NewModel 创建 TUI 状态模型。
 // historyTurns 用于限制发送给后端的短期对话轮数，避免原始消息无限增长。
 func NewModel(client services.ChatClient, persona string, historyTurns int, configPath, workspaceRoot string) Model {
@@ -71,7 +74,7 @@ func NewModel(client services.ChatClient, persona string, historyTurns int, conf
 	vp := viewport.New(0, 0)
 	vp.SetContent("")
 
-	return Model{
+	model := Model{
 		ui: state.UIState{
 			Mode:       state.ModeChat,
 			Focused:    "input",
@@ -95,6 +98,16 @@ func NewModel(client services.ChatClient, persona string, historyTurns int, conf
 		copyToClipboard: clipboard.WriteAll,
 		mu:              &sync.Mutex{},
 	}
+	if provider, ok := client.(services.WorkingSessionSummaryProvider); ok {
+		if summary, err := provider.GetWorkingSessionSummary(context.Background()); err == nil && strings.TrimSpace(summary) != "" {
+			model.chat.Messages = append(model.chat.Messages, state.Message{
+				Role:      "system",
+				Content:   resumeSummaryPrefix + "\n" + summary,
+				Timestamp: time.Now(),
+			})
+		}
+	}
+	return model
 }
 
 func (m *Model) mutex() *sync.Mutex {
@@ -176,4 +189,8 @@ func (m *Model) TrimHistory(maxTurns int) {
 	}
 
 	m.chat.Messages = append(system, others...)
+}
+
+func isResumeSummaryMessage(content string) bool {
+	return strings.HasPrefix(strings.TrimSpace(content), resumeSummaryPrefix)
 }

@@ -33,9 +33,12 @@ type AppConfiguration struct {
 	} `yaml:"memory"`
 
 	History struct {
-		ShortTermTurns           int `yaml:"short_term_turns"`
-		MaxToolContextMessages   int `yaml:"max_tool_context_messages"`
-		MaxToolContextOutputSize int `yaml:"max_tool_context_output_size"`
+		ShortTermTurns           int    `yaml:"short_term_turns"`
+		MaxToolContextMessages   int    `yaml:"max_tool_context_messages"`
+		MaxToolContextOutputSize int    `yaml:"max_tool_context_output_size"`
+		PersistSessionState      bool   `yaml:"persist_session_state"`
+		WorkspaceStateDir        string `yaml:"workspace_state_dir"`
+		ResumeLastSession        bool   `yaml:"resume_last_session"`
 	} `yaml:"history"`
 
 	Persona struct {
@@ -62,6 +65,9 @@ func DefaultAppConfig() *AppConfiguration {
 	cfg.History.ShortTermTurns = 6
 	cfg.History.MaxToolContextMessages = 3
 	cfg.History.MaxToolContextOutputSize = 4000
+	cfg.History.PersistSessionState = true
+	cfg.History.WorkspaceStateDir = "./data/workspaces"
+	cfg.History.ResumeLastSession = true
 	cfg.Persona.FilePath = DefaultPersonaFilePath
 	return cfg
 }
@@ -174,6 +180,9 @@ func (c *AppConfiguration) ValidateBase() error {
 	}
 	if c.History.MaxToolContextOutputSize <= 0 {
 		return fmt.Errorf("配置无效：history.max_tool_context_output_size 必须大于 0")
+	}
+	if c.History.PersistSessionState && strings.TrimSpace(c.History.WorkspaceStateDir) == "" {
+		return fmt.Errorf("配置无效：history.workspace_state_dir 不能为空")
 	}
 	return nil
 }

@@ -100,6 +100,11 @@ memory:
   storage_path: "./data/memory_rules.json"
 history:
   short_term_turns: 6
+  max_tool_context_messages: 3
+  max_tool_context_output_size: 4000
+  persist_session_state: true
+  workspace_state_dir: "./data/workspaces"
+  resume_last_session: true
 persona:
   file_path: "./configs/persona.txt"
 `)
@@ -193,6 +198,9 @@ func validConfig() *AppConfiguration {
 	cfg.History.ShortTermTurns = 6
 	cfg.History.MaxToolContextMessages = 3
 	cfg.History.MaxToolContextOutputSize = 4000
+	cfg.History.PersistSessionState = true
+	cfg.History.WorkspaceStateDir = "./data/workspaces"
+	cfg.History.ResumeLastSession = true
 	cfg.Persona.FilePath = DefaultPersonaFilePath
 	return cfg
 }

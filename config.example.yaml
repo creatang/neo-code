@@ -22,6 +22,11 @@ memory:
 
 history:
   short_term_turns: 6
+  max_tool_context_messages: 3
+  max_tool_context_output_size: 4000
+  persist_session_state: true
+  workspace_state_dir: "./data/workspaces"
+  resume_last_session: true
 
 persona:
   file_path: "./configs/persona.txt"

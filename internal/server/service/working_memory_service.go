@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
 	"go-llm-demo/internal/server/domain"
 )
@@ -41,7 +42,7 @@ func (s *workingMemoryServiceImpl) BuildContext(ctx context.Context, messages []
 	if err := s.Refresh(ctx, messages); err != nil {
 		return "", err
 	}
-	state, err := s.repo.Get(ctx)
+	state, err := s.Get(ctx)
 	if err != nil {
 		return "", err
 	}
@@ -59,19 +60,30 @@ func (s *workingMemoryServiceImpl) Clear(ctx context.Context) error {
 	return s.repo.Clear(ctx)
 }
 
+// Get 返回当前工作记忆快照。
+func (s *workingMemoryServiceImpl) Get(ctx context.Context) (*domain.WorkingMemoryState, error) {
+	return s.repo.Get(ctx)
+}
+
 func (s *workingMemoryServiceImpl) buildState(messages []domain.Message) *domain.WorkingMemoryState {
 	turns := collectRecentTurns(messages)
 	if len(turns) > s.maxRecentTurns {
 		turns = turns[len(turns)-s.maxRecentTurns:]
 	}
 
+	currentTask := latestUserMessage(messages)
+	openQuestions := collectOpenQuestions(messages, s.maxOpenQuestions)
 	state := &domain.WorkingMemoryState{
-		RecentTurns: turns,
+		CurrentTask:         currentTask,
+		TaskSummary:         buildTaskSummary(turns, currentTask),
+		LastCompletedAction: inferLastCompletedAction(messages),
+		CurrentInProgress:   inferCurrentInProgress(messages, currentTask),
+		NextStep:            inferNextStep(messages, openQuestions, currentTask),
+		RecentTurns:         turns,
+		OpenQuestions:       openQuestions,
+		RecentFiles:         collectRecentFiles(messages, s.maxRecentFiles),
+		UpdatedAt:           time.Now().UTC(),
 	}
-	state.CurrentTask = latestUserMessage(messages)
-	state.TaskSummary = buildTaskSummary(turns)
-	state.OpenQuestions = collectOpenQuestions(messages, s.maxOpenQuestions)
-	state.RecentFiles = collectRecentFiles(messages, s.maxRecentFiles)
 	return state
 }
 
@@ -111,7 +123,10 @@ func latestUserMessage(messages []domain.Message) string {
 	return ""
 }
 
-func buildTaskSummary(turns []domain.WorkingMemoryTurn) string {
+func buildTaskSummary(turns []domain.WorkingMemoryTurn, currentTask string) string {
+	if strings.TrimSpace(currentTask) != "" {
+		return domain.SummarizeText(currentTask, 160)
+	}
 	if len(turns) == 0 {
 		return ""
 	}
@@ -121,6 +136,72 @@ func buildTaskSummary(turns []domain.WorkingMemoryTurn) string {
 	}
 	if latest.Assistant != "" {
 		return domain.SummarizeText(latest.Assistant, 160)
+	}
+	return ""
+}
+
+func inferLastCompletedAction(messages []domain.Message) string {
+	for i := len(messages) - 1; i >= 0; i-- {
+		msg := messages[i]
+		if msg.Role != "assistant" {
+			continue
+		}
+		for _, line := range strings.Split(msg.Content, "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+			if containsAnyFold(line, "已完成", "已修复", "已经", "完成了", "已处理", "修复了", "implemented", "fixed", "updated", "added", "created") {
+				return domain.SummarizeText(line, 140)
+			}
+		}
+	}
+	return ""
+}
+
+func inferCurrentInProgress(messages []domain.Message, currentTask string) string {
+	trimmedTask := strings.TrimSpace(currentTask)
+	if trimmedTask == "" {
+		return ""
+	}
+	for i := len(messages) - 1; i >= 0; i-- {
+		msg := messages[i]
+		if msg.Role != "assistant" {
+			continue
+		}
+		content := strings.TrimSpace(msg.Content)
+		if content == "" {
+			continue
+		}
+		if containsAnyFold(content, "正在", "继续", "接下来", "当前", "处理中", "working on", "next", "continue") {
+			return domain.SummarizeText(content, 140)
+		}
+		break
+	}
+	return domain.SummarizeText(trimmedTask, 140)
+}
+
+func inferNextStep(messages []domain.Message, openQuestions []string, currentTask string) string {
+	for i := len(messages) - 1; i >= 0; i-- {
+		msg := messages[i]
+		if msg.Role != "assistant" {
+			continue
+		}
+		for _, line := range strings.Split(msg.Content, "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+			if containsAnyFold(line, "下一步", "接下来", "建议", "可以继续", "后续", "next step", "next", "follow-up") {
+				return domain.SummarizeText(line, 140)
+			}
+		}
+	}
+	if len(openQuestions) > 0 {
+		return "先解决: " + domain.SummarizeText(openQuestions[0], 110)
+	}
+	if strings.TrimSpace(currentTask) != "" {
+		return "继续推进: " + domain.SummarizeText(currentTask, 110)
 	}
 	return ""
 }
@@ -197,11 +278,23 @@ func formatWorkingMemoryContext(state *domain.WorkingMemoryState, workspaceRoot 
 	if state.TaskSummary != "" {
 		parts = append(parts, "Task summary: "+state.TaskSummary)
 	}
+	if state.LastCompletedAction != "" {
+		parts = append(parts, "Last completed action: "+state.LastCompletedAction)
+	}
+	if state.CurrentInProgress != "" {
+		parts = append(parts, "Current in progress: "+state.CurrentInProgress)
+	}
+	if state.NextStep != "" {
+		parts = append(parts, "Next step: "+state.NextStep)
+	}
 	if len(state.OpenQuestions) > 0 {
 		parts = append(parts, "Open questions: "+strings.Join(state.OpenQuestions, " | "))
 	}
 	if len(state.RecentFiles) > 0 {
 		parts = append(parts, "Recent file refs: "+strings.Join(state.RecentFiles, ", "))
+	}
+	if !state.UpdatedAt.IsZero() {
+		parts = append(parts, "State updated at: "+state.UpdatedAt.Format(time.RFC3339))
 	}
 	if len(state.RecentTurns) > 0 {
 		turnLines := make([]string, 0, len(state.RecentTurns))

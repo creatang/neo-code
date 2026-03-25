@@ -125,6 +125,11 @@ memory:
 
 history:
   short_term_turns: 6
+  max_tool_context_messages: 3
+  max_tool_context_output_size: 4000
+  persist_session_state: true
+  workspace_state_dir: "./data/workspaces"
+  resume_last_session: true
 
 persona:
   file_path: "./persona.txt"
@@ -140,6 +145,9 @@ persona:
 - `memory.min_match_score`：最低召回分数
 - `memory.max_prompt_chars`：记忆注入 prompt 的总字符上限
 - `history.short_term_turns`：保留最近多少轮上下文
+- `history.persist_session_state`：是否按 workspace 持久化当前工作现场
+- `history.workspace_state_dir`：workspace 会话状态文件保存目录
+- `history.resume_last_session`：启动时是否展示恢复摘要
 - `persona.file_path`：启动时加载的人设文件
 
 ## Memory 设计
@@ -153,6 +161,8 @@ persona:
 - `session_memory`：当前会话里仍有价值的临时 coding 信息
 
 召回顺序会优先考虑长期记忆中的用户偏好、项目规则、代码事实、修复经验，再补充 session memory。
+
+此外，working memory 现已支持按 workspace 保存会话快照。程序会记录当前目标、最近完成动作、下一步、最近文件和最近几轮对话，并在下次进入同一工作区时恢复这份现场。
 
 ## 运行
 
@@ -183,6 +193,7 @@ go run ./cmd/server
 - `config.yaml`：主配置文件
 - `config.example.yaml`：配置模板
 - `data/memory_rules.json`：长期结构化记忆文件
+- `data/workspaces/<workspace-hash>/session_state.json`：按工作区保存的当前工作现场
 - `persona.txt`：人设内容
 
 ## 安全与本地文件

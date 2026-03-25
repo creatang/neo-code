@@ -789,6 +789,9 @@ func (m *Model) buildMessages() []services.Message {
 
 	// 按照消息的原始时间顺序进行迭代
 	for idx, msg := range m.chat.Messages {
+		if msg.Role == "system" && isResumeSummaryMessage(msg.Content) {
+			continue
+		}
 		if msg.Role == "system" && isTransientToolStatusMessage(msg.Content) {
 			continue
 		}

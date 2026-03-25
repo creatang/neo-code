@@ -98,12 +98,19 @@ func (m Model) toComponentMessages() []components.Message {
 	for i, msg := range m.chat.Messages {
 		messages[i] = components.Message{
 			Role:      msg.Role,
-			Content:   msg.Content,
+			Content:   displayMessageContent(msg.Role, msg.Content),
 			Timestamp: msg.Timestamp,
 			Streaming: msg.Streaming,
 		}
 	}
 	return messages
+}
+
+func displayMessageContent(role, content string) string {
+	if role == "system" && isResumeSummaryMessage(content) {
+		return strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(content), resumeSummaryPrefix))
+	}
+	return content
 }
 
 func minInt(a, b int) int {
