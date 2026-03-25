@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 type SegmentType int
@@ -134,18 +135,14 @@ func RenderSegments(segments []ContentSegment, width int) string {
 	}
 
 	var b strings.Builder
-	textStyle := lipgloss.NewStyle().MaxWidth(width)
 
 	for _, segment := range segments {
 		switch segment.Type {
 		case SegmentCodeBlock:
 			b.WriteString(RenderCodeBlock(segment, width, ""))
 		case SegmentText:
-			lines := strings.Split(segment.Text, "\n")
-			for _, line := range lines {
-				b.WriteString(textStyle.Render(line))
-				b.WriteString("\n")
-			}
+			b.WriteString(wrapTextBlock(segment.Text, width))
+			b.WriteString("\n")
 		}
 	}
 
@@ -212,7 +209,7 @@ func HighlightCodeBlock(lines []string, lang string, width int, closed bool) str
 		resolvedLang = "text"
 	}
 
-	highlighted := HighlightCode(code, resolvedLang)
+	highlighted := wrapHighlightedCode(HighlightCode(code, resolvedLang), width)
 	b.WriteString("```")
 	b.WriteString(resolvedLang)
 	b.WriteString("\n")
@@ -226,6 +223,34 @@ func HighlightCodeBlock(lines []string, lang string, width int, closed bool) str
 
 	blockStyle := codeBlockStyle.MaxWidth(width)
 	return blockStyle.Render(b.String()) + "\n"
+}
+
+func wrapTextBlock(text string, width int) string {
+	if text == "" {
+		return ""
+	}
+	if width <= 0 {
+		return text
+	}
+	return ansi.Hardwrap(text, width, true)
+}
+
+func wrapHighlightedCode(text string, width int) string {
+	if text == "" {
+		return ""
+	}
+	contentWidth := width - 2
+	if contentWidth <= 0 {
+		contentWidth = width
+	}
+	if contentWidth <= 0 {
+		return text
+	}
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		lines[i] = ansi.Hardwrap(line, contentWidth, true)
+	}
+	return strings.Join(lines, "\n")
 }
 
 func FormatCopyNotice(ref CodeBlockRef) string {

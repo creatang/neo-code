@@ -17,4 +17,5 @@ type UIState struct {
 	Focused    string
 	AutoScroll bool
 	CopyStatus string
+	StatusText string
 }

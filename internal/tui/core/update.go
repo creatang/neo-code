@@ -59,10 +59,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.ui.AutoScroll = m.viewport.AtBottom()
 		return m, vpCmd
 
+	case StreamReadyMsg:
+		if msg.Stream == nil {
+			m.chat.Generating = false
+			m.ui.StatusText = "Done"
+			return m, nil
+		}
+		m.streamChan = msg.Stream
+		return m, m.streamResponseFromChannel()
+
 	case StreamChunkMsg:
 		if m.chat.Generating {
-			m.AppendLastMessage(msg.Content)
-			m.refreshViewport()
+			visible := m.consumeThinkingChunk(msg.Content)
+			if visible != "" {
+				m.AppendLastMessage(visible)
+				m.refreshViewport()
+			}
 		}
 		return m, m.streamResponseFromChannel()
 
@@ -71,6 +83,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		mu.Lock()
 		m.chat.Generating = false
 		m.streamChan = nil
+		m.ui.StatusText = "Done"
 
 		var lastContent string
 		shouldCheckToolCall := !m.chat.ToolExecuting && len(m.chat.Messages) > 0
@@ -84,6 +97,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		mu.Unlock()
+		m.resetThinkingFilter()
 
 		// 当前工具协议约定：模型如果想调用工具，需要把最后一条 assistant 消息完整输出为
 		// {"tool":"...","params":{...}} 结构。这里在流结束后统一解析，避免半截 JSON 被误触发。
@@ -98,6 +112,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						return m, nil
 					}
 					m.chat.ToolExecuting = true
+					m.ui.StatusText = ""
 					mu.Unlock()
 
 					paramsMap := map[string]interface{}{}
@@ -133,6 +148,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		mu.Lock()
 		m.chat.Generating = false
 		m.streamChan = nil
+		m.ui.StatusText = "Request failed"
 		replacedPlaceholder := false
 		if len(m.chat.Messages) > 0 {
 			lastMsg := &m.chat.Messages[len(m.chat.Messages)-1]
@@ -143,6 +159,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		mu.Unlock()
+		m.resetThinkingFilter()
 		if !replacedPlaceholder {
 			m.AddMessage("assistant", fmt.Sprintf("Error: %v", msg.Err))
 		}
@@ -175,6 +192,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		mu := m.mutex()
 		mu.Lock()
 		m.chat.ToolExecuting = false
+		m.ui.StatusText = ""
 		mu.Unlock()
 		// 将结构化工具上下文添加为系统消息，然后重新获取AI响应
 		if toolType, target, ok := isSecurityAskResult(msg.Result); ok {
@@ -195,6 +213,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.AddMessage("system", formatToolContextMessage(msg.Result))
 		m.AddMessage("assistant", "")
 		m.chat.Generating = true
+		m.ui.StatusText = ""
 		m.refreshViewport()
 
 		// 构建包含工具结果的消息并重新请求AI
@@ -205,11 +224,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		mu := m.mutex()
 		mu.Lock()
 		m.chat.ToolExecuting = false
+		m.ui.StatusText = ""
 		mu.Unlock()
 		// 将工具执行错误添加为结构化系统上下文
 		m.AddMessage("system", formatToolErrorContext(msg.Err))
 		m.AddMessage("assistant", "")
 		m.chat.Generating = true
+		m.ui.StatusText = ""
 		m.refreshViewport()
 
 		// 构建包含错误信息的消息并重新请求AI
@@ -345,10 +366,12 @@ func (m *Model) handleSubmit() (tea.Model, tea.Cmd) {
 		return *m, nil
 	}
 
-	switch m.ui.Mode {
-	case state.ModeHelp:
+	if m.ui.Mode == state.ModeHelp {
 		m.ui.Mode = state.ModeChat
-		return *m, nil
+		m.refreshViewport()
+		if input == "/help" {
+			return *m, nil
+		}
 	}
 
 	if strings.HasPrefix(input, "/") {
@@ -364,12 +387,15 @@ func (m *Model) handleSubmit() (tea.Model, tea.Cmd) {
 		return *m, nil
 	}
 
+	m.clearNotices()
+	m.resetThinkingFilter()
 	m.AddMessage("user", input)
 	m.AddMessage("assistant", "")
 	// 在请求发出前先裁剪原始消息，避免 UI 历史无限扩张并影响短期上下文质量。
 	m.TrimHistory(m.chat.HistoryTurns)
 	m.chat.Generating = true
 	m.ui.AutoScroll = true
+	m.ui.StatusText = ""
 	m.refreshViewport()
 
 	m.chat.CommandHistory = append(m.chat.CommandHistory, input)
@@ -385,6 +411,7 @@ func (m *Model) handleCommand(input string) (tea.Model, tea.Cmd) {
 		return *m, nil
 	}
 
+	m.clearNotices()
 	cmd := fields[0]
 	args := fields[1:]
 	if !m.chat.APIKeyReady && !isAPIKeyRecoveryCommand(cmd) {
@@ -815,18 +842,12 @@ func (m *Model) buildMessages() []services.Message {
 }
 
 func (m *Model) streamResponse(messages []services.Message) tea.Cmd {
-	stream, err := m.client.Chat(context.Background(), messages, m.chat.ActiveModel)
-	if err != nil {
-		return func() tea.Msg { return StreamErrorMsg{Err: err} }
-	}
-
-	m.streamChan = stream
 	return func() tea.Msg {
-		chunk, ok := <-stream
-		if !ok {
-			return StreamDoneMsg{}
+		stream, err := m.client.Chat(context.Background(), messages, m.chat.ActiveModel)
+		if err != nil {
+			return StreamErrorMsg{Err: err}
 		}
-		return StreamChunkMsg{Content: chunk}
+		return StreamReadyMsg{Stream: stream}
 	}
 }
 
@@ -845,11 +866,14 @@ func (m *Model) streamResponseFromChannel() tea.Cmd {
 
 func (m *Model) sendCodeToAI(code string) tea.Cmd {
 	prompt := fmt.Sprintf("Please explain the following code:\n```\n%s\n```", code)
+	m.clearNotices()
+	m.resetThinkingFilter()
 	m.AddMessage("user", prompt)
 	m.AddMessage("assistant", "")
 	m.TrimHistory(m.chat.HistoryTurns)
 	m.chat.Generating = true
 	m.ui.AutoScroll = true
+	m.ui.StatusText = ""
 	m.refreshViewport()
 
 	messages := m.buildMessages()

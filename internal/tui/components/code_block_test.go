@@ -3,6 +3,8 @@ package components
 import (
 	"strings"
 	"testing"
+
+	"github.com/charmbracelet/x/ansi"
 )
 
 func TestFenceHelpers(t *testing.T) {
@@ -126,6 +128,16 @@ func TestHighlightCodeBlockIncludesClosingFenceOnlyWhenClosed(t *testing.T) {
 	unclosed := HighlightCodeBlock([]string{"print(1)"}, "python", 80, false)
 	if strings.Count(unclosed, "```") != 1 {
 		t.Fatalf("expected unclosed block to contain only opening fence, got %q", unclosed)
+	}
+}
+
+func TestHighlightCodeBlockWrapsLongLines(t *testing.T) {
+	rendered := ansi.Strip(HighlightCodeBlock([]string{strings.Repeat("x", 30)}, "text", 10, true))
+	if strings.Contains(rendered, strings.Repeat("x", 30)) {
+		t.Fatalf("expected wrapped code line, got %q", rendered)
+	}
+	if strings.Count(rendered, strings.Repeat("x", 8)) < 3 {
+		t.Fatalf("expected wrapped code output, got %q", rendered)
 	}
 }
 

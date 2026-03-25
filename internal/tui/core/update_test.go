@@ -164,23 +164,49 @@ func TestHandleSubmitEmptyInputNoOp(t *testing.T) {
 	}
 }
 
-func TestHandleSubmitFromHelpModeReturnsToChat(t *testing.T) {
-	client := &fakeChatClient{}
+func TestHandleSubmitFromHelpModeSendsInput(t *testing.T) {
+	client := &fakeChatClient{chatChunks: []string{"hello back"}}
 	m := newTestModel(t, client)
 	m.ui.Mode = state.ModeHelp
-	m.textarea.SetValue("help")
+	m.textarea.SetValue("hello")
+
+	updated, cmd := m.handleSubmit()
+	got := updated.(Model)
+
+	if cmd == nil {
+		t.Fatal("expected command when submitting from help mode")
+	}
+	if got.ui.Mode != state.ModeChat {
+		t.Fatalf("expected chat mode, got %v", got.ui.Mode)
+	}
+	if len(got.chat.Messages) != 2 {
+		t.Fatalf("expected user message and assistant placeholder, got %d", len(got.chat.Messages))
+	}
+	if got.chat.Messages[0].Role != "user" || got.chat.Messages[0].Content != "hello" {
+		t.Fatalf("unexpected first message: %+v", got.chat.Messages[0])
+	}
+}
+
+func TestHandleSubmitHelpCommandClosesHelpAndRestoresViewportHeight(t *testing.T) {
+	client := &fakeChatClient{}
+	m := newTestModel(t, client)
+	m.ui.Height = 30
+	m.ui.Mode = state.ModeHelp
+	m.syncLayout()
+	helpHeight := m.viewport.Height
+	m.textarea.SetValue("/help")
 
 	updated, cmd := m.handleSubmit()
 	got := updated.(Model)
 
 	if cmd != nil {
-		t.Fatal("expected no command when leaving help mode")
+		t.Fatal("expected no command when closing help")
 	}
 	if got.ui.Mode != state.ModeChat {
 		t.Fatalf("expected chat mode, got %v", got.ui.Mode)
 	}
-	if len(got.chat.Messages) != 0 {
-		t.Fatalf("expected no messages while leaving help mode, got %d", len(got.chat.Messages))
+	if got.viewport.Height <= helpHeight {
+		t.Fatalf("expected viewport height to grow after closing help, got help=%d chat=%d", helpHeight, got.viewport.Height)
 	}
 }
 
@@ -236,6 +262,16 @@ func TestHandleSubmitStartsStreamingConversation(t *testing.T) {
 	}
 
 	msg := cmd()
+	ready, ok := msg.(StreamReadyMsg)
+	if !ok {
+		t.Fatalf("expected StreamReadyMsg, got %T", msg)
+	}
+	updated, nextCmd := got.Update(ready)
+	got = updated.(Model)
+	if nextCmd == nil {
+		t.Fatal("expected follow-up chunk command")
+	}
+	msg = nextCmd()
 	chunk, ok := msg.(StreamChunkMsg)
 	if !ok {
 		t.Fatalf("expected StreamChunkMsg, got %T", msg)
@@ -756,6 +792,16 @@ func TestHandleCommandExplainStartsStreaming(t *testing.T) {
 		t.Fatalf("expected explain prompt to include code, got %q", got.chat.Messages[0].Content)
 	}
 	msg := cmd()
+	ready, ok := msg.(StreamReadyMsg)
+	if !ok {
+		t.Fatalf("expected StreamReadyMsg, got %#v", msg)
+	}
+	updated, nextCmd := got.Update(ready)
+	got = updated.(Model)
+	if nextCmd == nil {
+		t.Fatal("expected explain chunk command")
+	}
+	msg = nextCmd()
 	if chunk, ok := msg.(StreamChunkMsg); !ok || chunk.Content != "explained" {
 		t.Fatalf("expected explain stream chunk, got %#v", msg)
 	}
@@ -1105,6 +1151,16 @@ func TestToolResultMsgAddsContextAndRestartsStreaming(t *testing.T) {
 		t.Fatal("expected streaming command")
 	}
 	msg := cmd()
+	ready, ok := msg.(StreamReadyMsg)
+	if !ok {
+		t.Fatalf("expected StreamReadyMsg, got %T", msg)
+	}
+	updated, nextCmd := got.Update(ready)
+	got = updated.(Model)
+	if nextCmd == nil {
+		t.Fatal("expected tool follow-up chunk command")
+	}
+	msg = nextCmd()
 	chunk, ok := msg.(StreamChunkMsg)
 	if !ok {
 		t.Fatalf("expected StreamChunkMsg, got %T", msg)
@@ -1138,6 +1194,16 @@ func TestToolErrorMsgAddsErrorContextAndRestartsStreaming(t *testing.T) {
 		t.Fatal("expected follow-up stream command")
 	}
 	msg := cmd()
+	ready, ok := msg.(StreamReadyMsg)
+	if !ok {
+		t.Fatalf("expected StreamReadyMsg, got %T", msg)
+	}
+	updated, nextCmd := got.Update(ready)
+	got = updated.(Model)
+	if nextCmd == nil {
+		t.Fatal("expected recovery chunk command")
+	}
+	msg = nextCmd()
 	if _, ok := msg.(StreamChunkMsg); !ok {
 		t.Fatalf("expected StreamChunkMsg, got %T", msg)
 	}
@@ -1291,8 +1357,22 @@ func TestStreamResponseAndStreamResponseFromChannelDone(t *testing.T) {
 		t.Fatal("expected command")
 	}
 	msg := cmd()
+	ready, ok := msg.(StreamReadyMsg)
+	if !ok {
+		t.Fatalf("expected StreamReadyMsg, got %T", msg)
+	}
+
+	updated, nextCmd := m.Update(ready)
+	got := updated.(Model)
+	if nextCmd == nil {
+		t.Fatal("expected follow-up command after stream is ready")
+	}
+	msg = nextCmd()
 	if _, ok := msg.(StreamDoneMsg); !ok {
 		t.Fatalf("expected StreamDoneMsg, got %T", msg)
+	}
+	if got.streamChan == nil {
+		t.Fatal("expected stream channel to be stored")
 	}
 
 	m.streamChan = nil

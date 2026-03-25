@@ -29,7 +29,7 @@ func (ml MessageList) RenderLayout() RenderedChatLayout {
 		return RenderedChatLayout{}
 	}
 	contentWidth := ml.Width - 4
-	if contentWidth < 20 {
+	if contentWidth <= 0 {
 		contentWidth = ml.Width
 	}
 
@@ -47,13 +47,11 @@ func (ml MessageList) RenderLayout() RenderedChatLayout {
 	regions := make([]ClickableRegion, 0)
 	row := 0
 
-	wrapStyle := lipgloss.NewStyle().MaxWidth(contentWidth)
-
 	for i, msg := range ml.Messages {
 		idx := i + 1
 		switch msg.Role {
 		case "user":
-			line := renderMessageLine(fmt.Sprintf("You [%d]:", idx), msg.Content, userMsgStyle, wrapStyle)
+			line := renderMessageLine(fmt.Sprintf("You [%d]:", idx), msg.Content, userMsgStyle, contentWidth)
 			b.WriteString(line)
 			b.WriteString("\n\n")
 			row += strings.Count(line, "\n") + 2
@@ -65,7 +63,7 @@ func (ml MessageList) RenderLayout() RenderedChatLayout {
 			row += consumedRows
 
 		case "system":
-			line := renderMessageLine("[System]", msg.Content, systemMsgStyle, wrapStyle)
+			line := renderMessageLine("[System]", msg.Content, systemMsgStyle, contentWidth)
 			b.WriteString(line)
 			b.WriteString("\n\n")
 			row += strings.Count(line, "\n") + 2
@@ -75,8 +73,12 @@ func (ml MessageList) RenderLayout() RenderedChatLayout {
 	return RenderedChatLayout{Content: b.String(), Regions: regions}
 }
 
-func renderMessageLine(label string, content string, labelStyle lipgloss.Style, wrapStyle lipgloss.Style) string {
-	return labelStyle.Render(label) + " " + wrapStyle.Render(content)
+func renderMessageLine(label string, content string, labelStyle lipgloss.Style, width int) string {
+	rendered := labelStyle.Render(label)
+	if strings.TrimSpace(content) == "" {
+		return rendered
+	}
+	return rendered + "\n" + wrapTextBlock(content, width)
 }
 
 func renderAssistantMessage(messageIndex, displayIndex int, content string, width int, startRow int, labelStyle lipgloss.Style) (string, []ClickableRegion, int) {
@@ -142,11 +144,5 @@ func renderTextSegment(text string, width int) string {
 	if text == "" {
 		return ""
 	}
-	var b strings.Builder
-	style := lipgloss.NewStyle().MaxWidth(width)
-	for _, line := range strings.Split(text, "\n") {
-		b.WriteString(style.Render(line))
-		b.WriteString("\n")
-	}
-	return b.String()
+	return wrapTextBlock(text, width) + "\n"
 }

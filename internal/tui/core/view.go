@@ -74,7 +74,7 @@ func (m Model) renderInputArea() string {
 	return components.InputBox{
 		Body:       m.textarea.View(),
 		Generating: m.chat.Generating,
-		Status:     m.ui.CopyStatus,
+		Status:     m.statusText(),
 	}.Render()
 }
 

@@ -31,6 +31,8 @@ type Model struct {
 	viewport        viewport.Model
 	chatLayout      components.RenderedChatLayout
 	copyToClipboard func(string) error
+	thinkingInBlock bool
+	thinkingCarry   string
 
 	mu *sync.Mutex
 
@@ -115,6 +117,93 @@ func (m *Model) mutex() *sync.Mutex {
 		m.mu = &sync.Mutex{}
 	}
 	return m.mu
+}
+
+func (m Model) statusText() string {
+	if strings.TrimSpace(m.ui.CopyStatus) != "" {
+		return m.ui.CopyStatus
+	}
+	if m.chat.ToolExecuting {
+		return "Executing tool..."
+	}
+	if m.chat.PendingApproval != nil {
+		return "Approval required"
+	}
+	if m.chat.Generating {
+		return "Thinking..."
+	}
+	if strings.TrimSpace(m.ui.StatusText) != "" {
+		return m.ui.StatusText
+	}
+	return "Ready"
+}
+
+func (m *Model) clearNotices() {
+	m.ui.CopyStatus = ""
+	m.ui.StatusText = ""
+}
+
+func (m *Model) resetThinkingFilter() {
+	m.thinkingInBlock = false
+	m.thinkingCarry = ""
+}
+
+func (m *Model) consumeThinkingChunk(chunk string) string {
+	if chunk == "" {
+		return ""
+	}
+
+	m.thinkingCarry += chunk
+	var out strings.Builder
+
+	for len(m.thinkingCarry) > 0 {
+		if m.thinkingInBlock {
+			if end := strings.Index(m.thinkingCarry, "</think>"); end >= 0 {
+				m.thinkingCarry = m.thinkingCarry[end+len("</think>"):]
+				m.thinkingInBlock = false
+				continue
+			}
+
+			if keep := partialTagSuffix(m.thinkingCarry, "</think>"); keep > 0 {
+				m.thinkingCarry = m.thinkingCarry[len(m.thinkingCarry)-keep:]
+			} else {
+				m.thinkingCarry = ""
+			}
+			break
+		}
+
+		if start := strings.Index(m.thinkingCarry, "<think>"); start >= 0 {
+			out.WriteString(m.thinkingCarry[:start])
+			m.thinkingCarry = m.thinkingCarry[start+len("<think>"):]
+			m.thinkingInBlock = true
+			continue
+		}
+
+		if keep := partialTagSuffix(m.thinkingCarry, "<think>"); keep > 0 {
+			safeLen := len(m.thinkingCarry) - keep
+			out.WriteString(m.thinkingCarry[:safeLen])
+			m.thinkingCarry = m.thinkingCarry[safeLen:]
+		} else {
+			out.WriteString(m.thinkingCarry)
+			m.thinkingCarry = ""
+		}
+		break
+	}
+
+	return out.String()
+}
+
+func partialTagSuffix(content string, tag string) int {
+	maxLen := len(tag) - 1
+	if len(content) < maxLen {
+		maxLen = len(content)
+	}
+	for size := maxLen; size > 0; size-- {
+		if strings.HasSuffix(content, tag[:size]) {
+			return size
+		}
+	}
+	return 0
 }
 
 // Init 返回 Bubble Tea 的初始命令。

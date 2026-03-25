@@ -83,6 +83,30 @@ func TestNewModelAddsResumeSummaryMessageWhenSupported(t *testing.T) {
 	}
 }
 
+func TestConsumeThinkingChunkHidesCrossChunkThinkBlocks(t *testing.T) {
+	m := Model{}
+
+	got := m.consumeThinkingChunk("visible<thi")
+	if got != "visible" {
+		t.Fatalf("expected visible prefix, got %q", got)
+	}
+
+	got = m.consumeThinkingChunk("nk>secret")
+	if got != "" {
+		t.Fatalf("expected think block content to stay hidden, got %q", got)
+	}
+
+	got = m.consumeThinkingChunk(" thoughts</th")
+	if got != "" {
+		t.Fatalf("expected partial closing tag to stay hidden, got %q", got)
+	}
+
+	got = m.consumeThinkingChunk("ink>after")
+	if got != "after" {
+		t.Fatalf("expected visible suffix after think block, got %q", got)
+	}
+}
+
 func TestTrimHistoryKeepsSystemMessagesAndLatestTurns(t *testing.T) {
 	m := Model{}
 	m.chat.Messages = []state.Message{

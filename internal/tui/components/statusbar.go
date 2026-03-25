@@ -26,18 +26,24 @@ func (s StatusBar) Render() string {
 		Background(lipgloss.Color("#282C34")).
 		Padding(0, 1)
 
-	status := "●"
+	statusText := "Ready"
+	statusStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#98C379")).
+		Background(lipgloss.Color("#282C34")).
+		Padding(0, 1)
 	if s.Generating {
-		status = lipgloss.NewStyle().
+		statusText = "Thinking"
+		statusStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#E5C07B")).
-			Render("◐")
+			Background(lipgloss.Color("#282C34")).
+			Padding(0, 1)
 	}
 
 	timeStr := time.Now().Format("15:04")
 	timestampStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#5C6370"))
 
 	memText := fmt.Sprintf("Memory: %d", s.MemoryCnt)
-	space := s.Width - len(s.Model) - len(memText) - len(timeStr) - 10
+	space := s.Width - len(s.Model) - len(memText) - len(statusText) - len(timeStr) - 12
 	if space < 0 {
 		space = 0
 	}
@@ -47,7 +53,7 @@ func (s StatusBar) Render() string {
 	b.WriteString("  ")
 	b.WriteString(memStyle.Render(memText))
 	b.WriteString("  ")
-	b.WriteString(status)
+	b.WriteString(statusStyle.Render(statusText))
 	if space > 0 {
 		b.WriteString(strings.Repeat(" ", space))
 	}

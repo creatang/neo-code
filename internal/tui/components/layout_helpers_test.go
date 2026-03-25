@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/charmbracelet/x/ansi"
 )
 
 func TestRenderHelpContainsKeyCommands(t *testing.T) {
@@ -75,5 +77,21 @@ func TestMessageListRenderLayoutIncludesCopyRegions(t *testing.T) {
 	}
 	if region.CodeBlock.Code != "fmt.Println(1)" {
 		t.Fatalf("expected copied code, got %+v", region.CodeBlock)
+	}
+}
+
+func TestMessageListRenderWrapsLongWords(t *testing.T) {
+	rendered := ansi.Strip(MessageList{
+		Width: 20,
+		Messages: []Message{
+			{Role: "user", Content: strings.Repeat("a", 25), Timestamp: time.Unix(1, 0)},
+		},
+	}.Render())
+
+	if strings.Contains(rendered, strings.Repeat("a", 25)) {
+		t.Fatalf("expected long line to wrap, got %q", rendered)
+	}
+	if !strings.Contains(rendered, strings.Repeat("a", 16)+"\n"+strings.Repeat("a", 9)) {
+		t.Fatalf("expected wrapped output, got %q", rendered)
 	}
 }

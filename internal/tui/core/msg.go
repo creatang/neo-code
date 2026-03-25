@@ -8,6 +8,12 @@ type StreamChunkMsg struct {
 
 func (StreamChunkMsg) isMsg() {}
 
+type StreamReadyMsg struct {
+	Stream <-chan string
+}
+
+func (StreamReadyMsg) isMsg() {}
+
 type StreamDoneMsg struct{}
 
 func (StreamDoneMsg) isMsg() {}
