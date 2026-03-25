@@ -106,3 +106,66 @@ func TestChatCompletionProviderChatReturnsErrorOnBadStatus(t *testing.T) {
 		t.Fatalf("expected model error in message, got: %v", err)
 	}
 }
+
+func TestChatCompletionProviderChatStreamsFallbackMessageOnMalformedChunk(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("data: {invalid json}\n"))
+	}))
+	defer server.Close()
+
+	p := &ChatCompletionProvider{
+		APIKey:  "test-key",
+		BaseURL: server.URL,
+		Model:   "test-model",
+	}
+
+	stream, err := p.Chat(context.Background(), []domain.Message{{Role: "user", Content: "hi"}})
+	if err != nil {
+		t.Fatalf("expected stream request to succeed, got error: %v", err)
+	}
+
+	var output strings.Builder
+	for chunk := range stream {
+		output.WriteString(chunk)
+	}
+
+	got := output.String()
+	if !strings.Contains(got, "[STREAM_ERROR]") {
+		t.Fatalf("expected fallback stream error marker, got: %q", got)
+	}
+	if !strings.Contains(got, "chat stream decode failed") {
+		t.Fatalf("expected decode failure details, got: %q", got)
+	}
+}
+
+func TestChatCompletionProviderChatStreamsFallbackMessageOnUnexpectedEOF(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	p := &ChatCompletionProvider{
+		APIKey:  "test-key",
+		BaseURL: server.URL,
+		Model:   "test-model",
+	}
+
+	stream, err := p.Chat(context.Background(), []domain.Message{{Role: "user", Content: "hi"}})
+	if err != nil {
+		t.Fatalf("expected stream request to succeed, got error: %v", err)
+	}
+
+	var output strings.Builder
+	for chunk := range stream {
+		output.WriteString(chunk)
+	}
+
+	got := output.String()
+	if !strings.Contains(got, "[STREAM_ERROR]") {
+		t.Fatalf("expected fallback stream error marker, got: %q", got)
+	}
+	if !strings.Contains(got, "unexpectedly before completion") {
+		t.Fatalf("expected EOF fallback details, got: %q", got)
+	}
+}
