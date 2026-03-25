@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -23,6 +24,7 @@ func restoreSetupGlobals(t *testing.T) {
 
 	origResolveWorkspaceRoot := resolveWorkspaceRoot
 	origSetWorkspaceRoot := setWorkspaceRoot
+	origInitializeSecurity := initializeSecurity
 	origEnsureConfigFile := ensureConfigFile
 	origValidateChatAPIKey := validateChatAPIKey
 	origWriteAppConfig := writeAppConfig
@@ -31,6 +33,7 @@ func restoreSetupGlobals(t *testing.T) {
 	t.Cleanup(func() {
 		resolveWorkspaceRoot = origResolveWorkspaceRoot
 		setWorkspaceRoot = origSetWorkspaceRoot
+		initializeSecurity = origInitializeSecurity
 		ensureConfigFile = origEnsureConfigFile
 		validateChatAPIKey = origValidateChatAPIKey
 		writeAppConfig = origWriteAppConfig
@@ -113,6 +116,7 @@ func TestPrepareWorkspaceResolvesAndSetsWorkspaceRoot(t *testing.T) {
 	restoreSetupGlobals(t)
 
 	var setRoot string
+	var initializedConfigDir string
 	resolveWorkspaceRoot = func(workspaceFlag string) (string, error) {
 		if workspaceFlag != "./workspace" {
 			t.Fatalf("expected workspace flag to flow through, got %q", workspaceFlag)
@@ -121,6 +125,10 @@ func TestPrepareWorkspaceResolvesAndSetsWorkspaceRoot(t *testing.T) {
 	}
 	setWorkspaceRoot = func(root string) error {
 		setRoot = root
+		return nil
+	}
+	initializeSecurity = func(configDir string) error {
+		initializedConfigDir = configDir
 		return nil
 	}
 
@@ -134,6 +142,9 @@ func TestPrepareWorkspaceResolvesAndSetsWorkspaceRoot(t *testing.T) {
 	if setRoot != root {
 		t.Fatalf("expected SetWorkspaceRoot to receive %q, got %q", root, setRoot)
 	}
+	if initializedConfigDir != filepath.Join("D:/neo-code/workspace", "configs", "security") {
+		t.Fatalf("expected security config dir to be initialized, got %q", initializedConfigDir)
+	}
 }
 
 func TestPrepareWorkspaceReturnsSetWorkspaceRootError(t *testing.T) {
@@ -141,6 +152,7 @@ func TestPrepareWorkspaceReturnsSetWorkspaceRootError(t *testing.T) {
 
 	resolveWorkspaceRoot = func(string) (string, error) { return "D:/neo-code/workspace", nil }
 	setWorkspaceRoot = func(string) error { return errors.New("set failed") }
+	initializeSecurity = func(string) error { return nil }
 
 	_, err := PrepareWorkspace("./workspace")
 	if err == nil || !strings.Contains(err.Error(), "set failed") {
@@ -156,6 +168,19 @@ func TestPrepareWorkspaceReturnsResolveError(t *testing.T) {
 	_, err := PrepareWorkspace("./workspace")
 	if err == nil || !strings.Contains(err.Error(), "resolve failed") {
 		t.Fatalf("expected resolve error, got %v", err)
+	}
+}
+
+func TestPrepareWorkspaceReturnsInitializeSecurityError(t *testing.T) {
+	restoreSetupGlobals(t)
+
+	resolveWorkspaceRoot = func(string) (string, error) { return "D:/neo-code/workspace", nil }
+	setWorkspaceRoot = func(string) error { return nil }
+	initializeSecurity = func(string) error { return errors.New("security failed") }
+
+	_, err := PrepareWorkspace("./workspace")
+	if err == nil || !strings.Contains(err.Error(), "security failed") {
+		t.Fatalf("expected initialize security error, got %v", err)
 	}
 }
 

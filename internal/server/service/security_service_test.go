@@ -61,8 +61,7 @@ func TestSecurityService_Check(t *testing.T) {
 
 	// 2. 初始化服务，并注入替身仓储
 	svc := NewSecurityService(mockRepo)
-	impl := svc.(*securityServiceImpl)
-	if err := impl.Initialize(""); err != nil {
+	if err := svc.Initialize(""); err != nil {
 		t.Fatalf("初始化失败: %v", err)
 	}
 

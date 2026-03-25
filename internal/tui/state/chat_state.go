@@ -13,16 +13,23 @@ type Message struct {
 	Streaming bool
 }
 
+type PendingApproval struct {
+	Call     services.ToolCall
+	ToolType string
+	Target   string
+}
+
 type ChatState struct {
-	Messages       []Message
-	HistoryTurns   int
-	Generating     bool
-	ActiveModel    string
-	MemoryStats    services.MemoryStats
-	CommandHistory []string
-	CmdHistIndex   int
-	WorkspaceRoot  string
-	ToolExecuting  bool
-	APIKeyReady    bool
-	ConfigPath     string
+	Messages        []Message
+	HistoryTurns    int
+	Generating      bool
+	ActiveModel     string
+	MemoryStats     services.MemoryStats
+	CommandHistory  []string
+	CmdHistIndex    int
+	WorkspaceRoot   string
+	ToolExecuting   bool
+	PendingApproval *PendingApproval
+	APIKeyReady     bool
+	ConfigPath      string
 }

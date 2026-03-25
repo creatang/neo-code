@@ -20,6 +20,7 @@ func (StreamErrorMsg) isMsg() {}
 
 type ToolResultMsg struct {
 	Result *services.ToolResult
+	Call   services.ToolCall
 }
 
 func (ToolResultMsg) isMsg() {}

@@ -112,7 +112,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							mu.Unlock()
 							return ToolErrorMsg{Err: fmt.Errorf("工具执行失败: 空返回")}
 						}
-						return ToolResultMsg{Result: result}
+						return ToolResultMsg{Result: result, Call: call}
 					}
 				}
 			}
@@ -170,6 +170,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.chat.ToolExecuting = false
 		mu.Unlock()
 		// 将结构化工具上下文添加为系统消息，然后重新获取AI响应
+		if toolType, target, ok := isSecurityAskResult(msg.Result); ok {
+			mu := m.mutex()
+			mu.Lock()
+			m.chat.PendingApproval = &state.PendingApproval{
+				Call:     msg.Call,
+				ToolType: toolType,
+				Target:   target,
+			}
+			pending := m.chat.PendingApproval
+			mu.Unlock()
+
+			m.AddMessage("assistant", formatPendingApprovalMessage(pending))
+			m.refreshViewport()
+			return m, nil
+		}
 		m.AddMessage("system", formatToolContextMessage(msg.Result))
 		m.AddMessage("assistant", "")
 		m.chat.Generating = true
@@ -281,6 +296,11 @@ func (m *Model) handleSubmit() (tea.Model, tea.Cmd) {
 		return *m, nil
 	}
 
+	if m.chat.PendingApproval != nil {
+		m.AddMessage("assistant", "A security approval is pending. Use /y to allow once or /n to reject before sending a new message.")
+		return *m, nil
+	}
+
 	m.AddMessage("user", input)
 	m.AddMessage("assistant", "")
 	// 在请求发出前先裁剪原始消息，避免 UI 历史无限扩张并影响短期上下文质量。
@@ -312,6 +332,71 @@ func (m *Model) handleCommand(input string) (tea.Model, tea.Cmd) {
 	switch cmd {
 	case "/help":
 		m.ui.Mode = state.ModeHelp
+	case "/y":
+		if len(args) > 0 {
+			m.AddMessage("assistant", "Usage: /y")
+			return *m, nil
+		}
+		if m.chat.PendingApproval == nil {
+			m.AddMessage("assistant", "There is no pending security approval.")
+			return *m, nil
+		}
+		if m.chat.ToolExecuting {
+			m.AddMessage("assistant", "Another tool is still running. Please retry /y after it finishes.")
+			return *m, nil
+		}
+
+		pending := *m.chat.PendingApproval
+		m.chat.PendingApproval = nil
+		if strings.TrimSpace(pending.Call.Tool) == "" {
+			m.AddMessage("assistant", "The pending tool request is incomplete and cannot be executed.")
+			return *m, nil
+		}
+
+		m.AddMessage("assistant", fmt.Sprintf("Approved. Running tool %s.", pending.Call.Tool))
+		m.AddMessage("system", formatToolStatusMessage(pending.Call.Tool, pending.Call.Params))
+
+		mu := m.mutex()
+		mu.Lock()
+		if m.chat.ToolExecuting {
+			m.chat.PendingApproval = &pending
+			mu.Unlock()
+			return *m, nil
+		}
+		m.chat.ToolExecuting = true
+		mu.Unlock()
+
+		m.refreshViewport()
+		return *m, func() tea.Msg {
+			services.ApproveSecurityAsk(pending.ToolType, pending.Target)
+			result := executeToolCall(pending.Call)
+			if result == nil {
+				mu := m.mutex()
+				mu.Lock()
+				m.chat.ToolExecuting = false
+				mu.Unlock()
+				return ToolErrorMsg{Err: fmt.Errorf("tool execution failed: empty result")}
+			}
+			return ToolResultMsg{Result: result, Call: pending.Call}
+		}
+	case "/n":
+		if len(args) > 0 {
+			m.AddMessage("assistant", "Usage: /n")
+			return *m, nil
+		}
+		if m.chat.PendingApproval == nil {
+			m.AddMessage("assistant", "There is no pending security approval.")
+			return *m, nil
+		}
+
+		pending := *m.chat.PendingApproval
+		m.chat.PendingApproval = nil
+		toolName := strings.TrimSpace(pending.Call.Tool)
+		if toolName == "" {
+			toolName = "unknown"
+		}
+		m.AddMessage("assistant", fmt.Sprintf("Rejected tool %s for target %s.", toolName, pending.Target))
+		return *m, nil
 	case "/exit", "/quit", "/q":
 		return *m, tea.Quit
 	case "/apikey":
@@ -492,7 +577,7 @@ func (m *Model) handleCommand(input string) (tea.Model, tea.Cmd) {
 
 func isAPIKeyRecoveryCommand(cmd string) bool {
 	switch cmd {
-	case "/apikey", "/provider", "/help", "/switch", "/pwd", "/workspace", "/exit", "/quit", "/q":
+	case "/apikey", "/provider", "/help", "/switch", "/pwd", "/workspace", "/y", "/n", "/exit", "/quit", "/q":
 		return true
 	default:
 		return false
@@ -638,6 +723,33 @@ func formatToolStatusMessage(toolName string, params map[string]interface{}) str
 		detail = " workdir=" + strings.TrimSpace(workdir)
 	}
 	return fmt.Sprintf("%s tool=%s%s", toolStatusPrefix, strings.TrimSpace(toolName), detail)
+}
+
+func isSecurityAskResult(result *services.ToolResult) (string, string, bool) {
+	if result == nil || result.Success || result.Metadata == nil {
+		return "", "", false
+	}
+	action, _ := result.Metadata["securityAction"].(string)
+	if strings.TrimSpace(strings.ToLower(action)) != "ask" {
+		return "", "", false
+	}
+	toolType, _ := result.Metadata["securityToolType"].(string)
+	target, _ := result.Metadata["securityTarget"].(string)
+	if strings.TrimSpace(toolType) == "" || strings.TrimSpace(target) == "" {
+		return "", "", false
+	}
+	return strings.TrimSpace(toolType), strings.TrimSpace(target), true
+}
+
+func formatPendingApprovalMessage(pending *state.PendingApproval) string {
+	if pending == nil {
+		return "Security approval is required. Use /y to allow once or /n to reject."
+	}
+	toolName := strings.TrimSpace(pending.Call.Tool)
+	if toolName == "" {
+		toolName = "unknown"
+	}
+	return fmt.Sprintf("Security approval required for %s.\nTarget: %s\nUse /y to allow once, or /n to reject.", toolName, pending.Target)
 }
 
 func formatToolContextMessage(result *services.ToolResult) string {

@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"runtime"
 	"time"
 )
 
@@ -30,6 +31,9 @@ func (b *BashTool) Run(params map[string]interface{}) *ToolResult {
 		errRes.ToolName = b.Definition().Name
 		return errRes
 	}
+	if denied := guardToolExecution("Bash", command, b.Definition().Name); denied != nil {
+		return denied
+	}
 	timeoutMs, errRes := optionalInt(params, "timeout", 120000)
 	if errRes != nil {
 		errRes.ToolName = b.Definition().Name
@@ -52,7 +56,26 @@ func (b *BashTool) Run(params map[string]interface{}) *ToolResult {
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutMs)*time.Millisecond)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "bash", "-lc", command)
+
+	var shell string
+	var shellArgs []string
+	switch runtime.GOOS {
+	case "linux", "darwin":
+		// Linux/macOS: 使用 bash
+		shell = "bash"
+		shellArgs = []string{"-lc", command}
+	case "windows":
+		// Windows: 使用 PowerShell
+		shell = "powershell"
+		shellArgs = []string{"-Command", command}
+	default:
+		shell = "bash"
+		shellArgs = []string{"-lc", command}
+	}
+
+	// 使用动态选择的 shell 和参数创建命令
+	shell, shellArgs = preferredShellCommand(runtime.GOOS, command, exec.LookPath, shell, shellArgs)
+	cmd := exec.CommandContext(ctx, shell, shellArgs...)
 	cmd.Dir = workdir
 	var stdoutBuf, stderrBuf bytes.Buffer
 	cmd.Stdout = &stdoutBuf
@@ -78,4 +101,31 @@ func (b *BashTool) Run(params map[string]interface{}) *ToolResult {
 		result.Output += fmt.Sprintf("\nSTDERR: %s", stderrBuf.String())
 	}
 	return result
+}
+
+type shellLookup func(string) (string, error)
+
+func preferredShellCommand(goos, command string, lookPath shellLookup, shell string, shellArgs []string) (string, []string) {
+	switch goos {
+	case "windows":
+		for _, candidate := range []struct {
+			name string
+			args []string
+		}{
+			{name: "powershell", args: []string{"-Command", command}},
+			{name: "pwsh", args: []string{"-Command", command}},
+			{name: "cmd.exe", args: []string{"/C", command}},
+			{name: "cmd", args: []string{"/C", command}},
+		} {
+			if _, err := lookPath(candidate.name); err == nil {
+				return candidate.name, candidate.args
+			}
+		}
+		return "cmd", []string{"/C", command}
+	default:
+		if _, err := lookPath("bash"); err == nil {
+			return "bash", []string{"-lc", command}
+		}
+		return "sh", []string{"-c", command}
+	}
 }

@@ -10,25 +10,21 @@ import (
 	"github.com/bmatcuk/doublestar/v4"
 )
 
-type SecurityService interface {
-	Check(toolType string, target string) domain.Action
-}
-
-// securityServiceImpl 是 SecurityService 的具体实现
-type securityServiceImpl struct {
+// SecurityService provides security checks backed by configured rule sets.
+type SecurityService struct {
 	configRepo domain.SecurityConfigRepository
 	blackList  *domain.Config
 	whiteList  *domain.Config
 	yellowList *domain.Config
 }
 
-func NewSecurityService(configRepo domain.SecurityConfigRepository) SecurityService {
-	return &securityServiceImpl{
+func NewSecurityService(configRepo domain.SecurityConfigRepository) *SecurityService {
+	return &SecurityService{
 		configRepo: configRepo,
 	}
 }
 
-func (s *securityServiceImpl) Initialize(configDir string) error {
+func (s *SecurityService) Initialize(configDir string) error {
 	blackList, whiteList, yellowList, err := s.configRepo.LoadAll(configDir)
 	if err != nil {
 		return err
@@ -39,7 +35,7 @@ func (s *securityServiceImpl) Initialize(configDir string) error {
 	return nil
 }
 
-func (s *securityServiceImpl) Check(toolType string, target string) domain.Action {
+func (s *SecurityService) Check(toolType string, target string) domain.Action {
 	normalizedTarget := target
 
 	// 安全增强：对路径类操作进行规范化处理
@@ -74,7 +70,7 @@ func (s *securityServiceImpl) Check(toolType string, target string) domain.Actio
 	return domain.ActionAsk
 }
 
-func (s *securityServiceImpl) matchesList(config *domain.Config, toolType, target string) bool {
+func (s *SecurityService) matchesList(config *domain.Config, toolType, target string) bool {
 	if config == nil {
 		return false
 	}

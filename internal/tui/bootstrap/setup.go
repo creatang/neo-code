@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"go-llm-demo/configs"
@@ -22,6 +23,7 @@ const (
 var (
 	resolveWorkspaceRoot = services.ResolveWorkspaceRoot
 	setWorkspaceRoot     = services.SetWorkspaceRoot
+	initializeSecurity   = services.InitializeSecurity
 	ensureConfigFile     = configs.EnsureConfigFile
 	validateChatAPIKey   = services.ValidateChatAPIKey
 	writeAppConfig       = configs.WriteAppConfig
@@ -33,6 +35,9 @@ func PrepareWorkspace(workspaceFlag string) (string, error) {
 		return "", err
 	}
 	if err := setWorkspaceRoot(workspaceRoot); err != nil {
+		return "", err
+	}
+	if err := initializeSecurity(filepath.Join(workspaceRoot, "configs", "security")); err != nil {
 		return "", err
 	}
 	return workspaceRoot, nil

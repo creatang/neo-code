@@ -6,7 +6,9 @@ import (
 	"go-llm-demo/configs"
 	"go-llm-demo/internal/server/domain"
 	serverprovider "go-llm-demo/internal/server/infra/provider"
+	serverrepo "go-llm-demo/internal/server/infra/repository"
 	servertools "go-llm-demo/internal/server/infra/tools"
+	serverservice "go-llm-demo/internal/server/service"
 )
 
 type ToolCall = domain.ToolCall
@@ -43,6 +45,20 @@ func NormalizeToolParams(params map[string]interface{}) map[string]interface{} {
 
 func ExecuteToolCall(call ToolCall) *ToolResult {
 	return servertools.GlobalRegistry.Execute(call)
+}
+
+func ApproveSecurityAsk(toolType, target string) {
+	servertools.ApproveSecurityAsk(toolType, target)
+}
+
+func InitializeSecurity(configDir string) error {
+	securityRepo := serverrepo.NewSecurityConfigRepository()
+	securitySvc := serverservice.NewSecurityService(securityRepo)
+	if err := securitySvc.Initialize(configDir); err != nil {
+		return err
+	}
+	servertools.SetSecurityChecker(securitySvc)
+	return nil
 }
 
 func ValidateChatAPIKey(ctx context.Context, cfg *configs.AppConfiguration) error {

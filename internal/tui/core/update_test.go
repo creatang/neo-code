@@ -1309,3 +1309,86 @@ func TestWorkspaceCommandShowsWorkspaceRoot(t *testing.T) {
 		t.Fatalf("expected workspace path in response, got %q", got.chat.Messages[0].Content)
 	}
 }
+
+func TestApproveCommandWhileToolExecutingKeepsPendingApproval(t *testing.T) {
+	m := Model{
+		chat: state.ChatState{
+			ToolExecuting: true,
+			PendingApproval: &state.PendingApproval{
+				Call: services.ToolCall{
+					Tool: "bash",
+					Params: map[string]interface{}{
+						"command": "echo hello",
+					},
+				},
+				ToolType: "Bash",
+				Target:   "echo hello",
+			},
+		},
+	}
+
+	updated, cmd := m.handleCommand("/y")
+	if cmd != nil {
+		t.Fatal("expected no tool execution command while another tool is running")
+	}
+
+	got := updated.(Model)
+	if got.chat.PendingApproval == nil {
+		t.Fatal("expected pending approval to be preserved")
+	}
+	if got.chat.PendingApproval.Call.Tool != "bash" {
+		t.Fatalf("expected pending tool to stay intact, got %+v", got.chat.PendingApproval.Call)
+	}
+	if len(got.chat.Messages) != 1 {
+		t.Fatalf("expected a single assistant warning, got %d", len(got.chat.Messages))
+	}
+	if !strings.Contains(got.chat.Messages[0].Content, "/y") {
+		t.Fatalf("expected warning message to mention /y, got %q", got.chat.Messages[0].Content)
+	}
+}
+
+func TestToolResultMsgSecurityAskStoresPendingApproval(t *testing.T) {
+	client := &fakeChatClient{}
+	m := newTestModel(t, client)
+	m.chat.ToolExecuting = true
+
+	result := &services.ToolResult{
+		ToolName: "bash",
+		Success:  false,
+		Metadata: map[string]interface{}{
+			"securityAction":   "ask",
+			"securityToolType": "Bash",
+			"securityTarget":   "echo hello",
+		},
+	}
+
+	updated, cmd := m.Update(ToolResultMsg{
+		Result: result,
+		Call: services.ToolCall{
+			Tool: "bash",
+			Params: map[string]interface{}{
+				"command": "echo hello",
+			},
+		},
+	})
+	if cmd != nil {
+		t.Fatal("expected no follow-up command while waiting for approval")
+	}
+
+	got := updated.(Model)
+	if got.chat.ToolExecuting {
+		t.Fatal("expected tool executing flag to be cleared")
+	}
+	if got.chat.PendingApproval == nil {
+		t.Fatal("expected pending approval to be recorded")
+	}
+	if got.chat.PendingApproval.Target != "echo hello" {
+		t.Fatalf("unexpected pending approval target %q", got.chat.PendingApproval.Target)
+	}
+	if len(got.chat.Messages) != 1 {
+		t.Fatalf("expected one approval prompt message, got %d", len(got.chat.Messages))
+	}
+	if !strings.Contains(got.chat.Messages[0].Content, "/y") {
+		t.Fatalf("expected approval prompt to mention /y, got %q", got.chat.Messages[0].Content)
+	}
+}

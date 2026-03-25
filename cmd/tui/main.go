@@ -7,9 +7,13 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"go-llm-demo/configs"
+	"go-llm-demo/internal/server/infra/repository"
+	"go-llm-demo/internal/server/infra/tools"
+	"go-llm-demo/internal/server/service"
 	"go-llm-demo/internal/tui/bootstrap"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -56,6 +60,7 @@ func main() {
 	if err != nil {
 		os.Exit(1)
 	}
+	_ = loadDotEnv(".env")
 
 	if err := run(workspaceFlag, os.Stdin, os.Stdout, os.Stderr); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -88,6 +93,10 @@ func runWithDeps(workspaceFlag string, deps runDeps) error {
 		return fmt.Errorf("解析工作区失败: %w", err)
 	}
 
+	if err := initializeSecurity(filepath.Join(workspaceRoot, "configs", "security")); err != nil {
+		return fmt.Errorf("安全策略初始化失败：%w", err)
+	}
+
 	scanner := bufio.NewScanner(deps.stdin)
 	ready, err := deps.ensureAPIKeyInteractive(context.Background(), scanner, defaultConfigPath)
 	if err != nil {
@@ -118,6 +127,16 @@ func runWithDeps(workspaceFlag string, deps runDeps) error {
 		return fmt.Errorf("运行失败: %w", err)
 	}
 
+	return nil
+}
+
+func initializeSecurity(configDir string) error {
+	securityRepo := repository.NewSecurityConfigRepository()
+	securitySvc := service.NewSecurityService(securityRepo)
+	if err := securitySvc.Initialize(configDir); err != nil {
+		return err
+	}
+	tools.SetSecurityChecker(securitySvc)
 	return nil
 }
 
