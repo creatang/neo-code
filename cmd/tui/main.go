@@ -133,11 +133,7 @@ func runWithDeps(workspaceFlag string, deps runDeps) error {
 func initializeSecurity(configDir string) error {
 	securityRepo := repository.NewSecurityConfigRepository()
 	securitySvc := service.NewSecurityService(securityRepo)
-	initializer, ok := securitySvc.(interface{ Initialize(string) error })
-	if !ok {
-		return fmt.Errorf("security service does not support initialization")
-	}
-	if err := initializer.Initialize(configDir); err != nil {
+	if err := securitySvc.Initialize(configDir); err != nil {
 		return err
 	}
 	tools.SetSecurityChecker(securitySvc)
