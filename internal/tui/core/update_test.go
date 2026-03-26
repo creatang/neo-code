@@ -200,6 +200,7 @@ func TestHandleSubmitFromHelpModeSendsInput(t *testing.T) {
 	client := &fakeChatClient{chatChunks: []string{"hello back"}}
 	m := newTestModel(t, client)
 	m.ui.Mode = state.ModeHelp
+	m.chat.APIKeyReady = true
 	m.textarea.SetValue("hello")
 
 	updated, cmd := m.handleSubmit()
