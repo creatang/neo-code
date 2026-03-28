@@ -60,31 +60,80 @@ type ModelOption struct {
 	Description string
 }
 
+// BuiltinProviderConfigs returns all known provider presets, including scaffolded ones.
+func BuiltinProviderConfigs() []ProviderConfig {
+	return []ProviderConfig{
+		{
+			Name:      ProviderOpenAI,
+			Type:      ProviderOpenAI,
+			BaseURL:   DefaultOpenAIBaseURL,
+			Model:     DefaultOpenAIModel,
+			APIKeyEnv: DefaultOpenAIAPIKeyEnv,
+		},
+		{
+			Name:      ProviderAnthropic,
+			Type:      ProviderAnthropic,
+			BaseURL:   DefaultAnthropicBaseURL,
+			Model:     DefaultAnthropicModel,
+			APIKeyEnv: DefaultAnthropicAPIKeyEnv,
+		},
+		{
+			Name:      ProviderGemini,
+			Type:      ProviderGemini,
+			BaseURL:   DefaultGeminiBaseURL,
+			Model:     DefaultGeminiModel,
+			APIKeyEnv: DefaultGeminiAPIKeyEnv,
+		},
+	}
+}
+
+// MVPProviderConfigs returns the provider presets that should be enabled by default in the MVP.
+func MVPProviderConfigs() []ProviderConfig {
+	return []ProviderConfig{
+		{
+			Name:      ProviderOpenAI,
+			Type:      ProviderOpenAI,
+			BaseURL:   DefaultOpenAIBaseURL,
+			Model:     DefaultOpenAIModel,
+			APIKeyEnv: DefaultOpenAIAPIKeyEnv,
+		},
+	}
+}
+
+// ScaffoldProviderConfigs returns provider presets that are prepared but not officially enabled in the MVP.
+func ScaffoldProviderConfigs() []ProviderConfig {
+	return []ProviderConfig{
+		{
+			Name:      ProviderAnthropic,
+			Type:      ProviderAnthropic,
+			BaseURL:   DefaultAnthropicBaseURL,
+			Model:     DefaultAnthropicModel,
+			APIKeyEnv: DefaultAnthropicAPIKeyEnv,
+		},
+		{
+			Name:      ProviderGemini,
+			Type:      ProviderGemini,
+			BaseURL:   DefaultGeminiBaseURL,
+			Model:     DefaultGeminiModel,
+			APIKeyEnv: DefaultGeminiAPIKeyEnv,
+		},
+	}
+}
+
+// BuiltinProviderConfig returns the preset configuration for a known provider.
+func BuiltinProviderConfig(name string) (ProviderConfig, error) {
+	target := strings.ToLower(strings.TrimSpace(name))
+	for _, provider := range BuiltinProviderConfigs() {
+		if strings.ToLower(strings.TrimSpace(provider.Name)) == target {
+			return provider, nil
+		}
+	}
+	return ProviderConfig{}, fmt.Errorf("config: built-in provider %q not found", name)
+}
+
 func Default() *Config {
 	return &Config{
-		Providers: []ProviderConfig{
-			{
-				Name:      ProviderOpenAI,
-				Type:      ProviderOpenAI,
-				BaseURL:   DefaultOpenAIBaseURL,
-				Model:     DefaultOpenAIModel,
-				APIKeyEnv: DefaultOpenAIAPIKeyEnv,
-			},
-			{
-				Name:      ProviderAnthropic,
-				Type:      ProviderAnthropic,
-				BaseURL:   DefaultAnthropicBaseURL,
-				Model:     DefaultAnthropicModel,
-				APIKeyEnv: DefaultAnthropicAPIKeyEnv,
-			},
-			{
-				Name:      ProviderGemini,
-				Type:      ProviderGemini,
-				BaseURL:   DefaultGeminiBaseURL,
-				Model:     DefaultGeminiModel,
-				APIKeyEnv: DefaultGeminiAPIKeyEnv,
-			},
-		},
+		Providers:        BuiltinProviderConfigs(),
 		SelectedProvider: DefaultSelectedProvider,
 		CurrentModel:     DefaultOpenAIModel,
 		Workdir:          DefaultWorkdir,
@@ -103,6 +152,29 @@ func BuiltinModelCatalog() []ModelOption {
 		ModelOption{Name: DefaultAnthropicModel, Description: "Balanced Anthropic coding model"},
 		ModelOption{Name: DefaultGeminiModel, Description: "Default Gemini reasoning model"},
 	)
+}
+
+// BuiltinModelCatalogForProvider returns the built-in model options for the given provider.
+func BuiltinModelCatalogForProvider(providerName string) []ModelOption {
+	switch strings.ToLower(strings.TrimSpace(providerName)) {
+	case ProviderOpenAI:
+		return []ModelOption{
+			{Name: DefaultOpenAIModel, Description: "Stable OpenAI default model"},
+			{Name: "gpt-4o", Description: "Fast general-purpose OpenAI model"},
+			{Name: "gpt-5.4", Description: "Frontier reasoning and coding model"},
+			{Name: "gpt-5.3-codex", Description: "Code-focused GPT-5.3 variant"},
+		}
+	case ProviderAnthropic:
+		return []ModelOption{
+			{Name: DefaultAnthropicModel, Description: "Balanced Anthropic coding model"},
+		}
+	case ProviderGemini:
+		return []ModelOption{
+			{Name: DefaultGeminiModel, Description: "Default Gemini reasoning model"},
+		}
+	default:
+		return nil
+	}
 }
 
 func (c *Config) Clone() Config {

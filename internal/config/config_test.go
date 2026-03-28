@@ -681,6 +681,113 @@ func TestLoaderDefaultsAndBuiltinCatalog(t *testing.T) {
 	}
 }
 
+func TestBuiltinProviderConfigs(t *testing.T) {
+	t.Parallel()
+
+	providers := BuiltinProviderConfigs()
+	if len(providers) != 3 {
+		t.Fatalf("expected 3 builtin providers, got %d", len(providers))
+	}
+
+	openai, err := BuiltinProviderConfig(ProviderOpenAI)
+	if err != nil {
+		t.Fatalf("BuiltinProviderConfig(%q) error = %v", ProviderOpenAI, err)
+	}
+	if openai.BaseURL != DefaultOpenAIBaseURL || openai.Model != DefaultOpenAIModel {
+		t.Fatalf("unexpected openai preset: %+v", openai)
+	}
+
+	anthropic, err := BuiltinProviderConfig(ProviderAnthropic)
+	if err != nil {
+		t.Fatalf("BuiltinProviderConfig(%q) error = %v", ProviderAnthropic, err)
+	}
+	if anthropic.BaseURL != DefaultAnthropicBaseURL || anthropic.Model != DefaultAnthropicModel {
+		t.Fatalf("unexpected anthropic preset: %+v", anthropic)
+	}
+
+	gemini, err := BuiltinProviderConfig(ProviderGemini)
+	if err != nil {
+		t.Fatalf("BuiltinProviderConfig(%q) error = %v", ProviderGemini, err)
+	}
+	if gemini.BaseURL != DefaultGeminiBaseURL || gemini.Model != DefaultGeminiModel {
+		t.Fatalf("unexpected gemini preset: %+v", gemini)
+	}
+
+	if _, err := BuiltinProviderConfig("unknown"); err == nil {
+		t.Fatalf("expected unknown provider lookup to fail")
+	}
+}
+
+func TestProviderPresetSlices(t *testing.T) {
+	t.Parallel()
+
+	mvpProviders := MVPProviderConfigs()
+	if len(mvpProviders) != 1 {
+		t.Fatalf("expected 1 mvp provider, got %d", len(mvpProviders))
+	}
+	if got := mvpProviders[0].Name; got != ProviderOpenAI {
+		t.Fatalf("expected mvp provider %q, got %q", ProviderOpenAI, got)
+	}
+
+	scaffoldProviders := ScaffoldProviderConfigs()
+	if len(scaffoldProviders) != 2 {
+		t.Fatalf("expected 2 scaffold providers, got %d", len(scaffoldProviders))
+	}
+	if scaffoldProviders[0].Name != ProviderAnthropic || scaffoldProviders[1].Name != ProviderGemini {
+		t.Fatalf("unexpected scaffold providers: %+v", scaffoldProviders)
+	}
+}
+
+func TestBuiltinModelCatalogForProvider(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name         string
+		providerName string
+		wantCount    int
+		wantFirst    string
+	}{
+		{
+			name:         "openai",
+			providerName: ProviderOpenAI,
+			wantCount:    4,
+			wantFirst:    DefaultOpenAIModel,
+		},
+		{
+			name:         "anthropic",
+			providerName: ProviderAnthropic,
+			wantCount:    1,
+			wantFirst:    DefaultAnthropicModel,
+		},
+		{
+			name:         "gemini",
+			providerName: ProviderGemini,
+			wantCount:    1,
+			wantFirst:    DefaultGeminiModel,
+		},
+		{
+			name:         "unknown",
+			providerName: "unknown",
+			wantCount:    0,
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			catalog := BuiltinModelCatalogForProvider(tc.providerName)
+			if len(catalog) != tc.wantCount {
+				t.Fatalf("BuiltinModelCatalogForProvider(%q) count = %d, want %d", tc.providerName, len(catalog), tc.wantCount)
+			}
+			if tc.wantCount > 0 && catalog[0].Name != tc.wantFirst {
+				t.Fatalf("BuiltinModelCatalogForProvider(%q) first model = %q, want %q", tc.providerName, catalog[0].Name, tc.wantFirst)
+			}
+		})
+	}
+}
+
 func restoreEnv(t *testing.T, key string) {
 	t.Helper()
 	value, ok := os.LookupEnv(key)
