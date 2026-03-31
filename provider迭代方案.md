@@ -43,9 +43,9 @@ Agent 框架底层、官方内置供应商的主流实现方式，主打类型�
 
 实现细节：
 * 跨平台适配系统原生安全存储：
-* macOS：存储在系统 Keychain（钥匙串），受系统权限和 Touch ID/Face ID 保护；
-* Windows：存储在Credential Manager（凭据管理器），绑定用户账户权限；
-* Linux：存储在libsecret/gnome-keyring，遵循桌面环境安全规范。
+  * macOS：存储在系统 Keychain（钥匙串），受系统权限和 Touch ID/Face ID 保护；
+  * Windows：存储在Credential Manager（凭据管理器），绑定用户账户权限；
+  * Linux：存储在libsecret/gnome-keyring，遵循桌面环境安全规范。
 * API Key 仅在应用启动时通过系统 API 读取，内存中临时持有，不落盘明文；
 * 云端行为：以 Cursor 为例，用户自定义 API Key不会存储在平台服务器，仅在每次请求时通过加密通道临时传输到后端完成代理调用，请求结束后立即清除，不做任何持久化。
 
