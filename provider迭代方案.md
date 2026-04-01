@@ -121,13 +121,15 @@ type ProviderError struct {
 
 **问题**：网络抖动、偶发 5xx 直接失败，用户体验差。
 
-**方案（路径 A：driver 内部替换 Transport）**：
+**方案：**
+
+路径 A：driver 内部替换 Transport
 
 - 实现 `http.RoundTripper` 中间件 `RetryTransport`
 - 指数退避：仅对 `Retryable` 错误重试，最大 3 次，基础间隔 1s，抖动 ±500ms
 - 先在 openai driver 中启用，后续新 driver 可复用
 
-> 路径 B（修改 `Build` 签名注入 `BuildOption`）改动面大，暂不采用。
+路径 B（修改 `Build` 签名注入 `BuildOption`）：
 
 **能力边界**：`RetryTransport` 仅处理**请求级重试**（连接失败、5xx 初始响应等）。SSE 流式传输**中途断连**不在 MVP 重试范围内——`consumeStream` 仅通过 `io.EOF` 返回已接收的部分内容，保证"有部分结果总比没有好"的降级行为。
 
