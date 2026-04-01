@@ -214,7 +214,7 @@ type ModelDescriptor struct {
 
 ---
 
-### Phase 2.5：统一本地存储层（P1，前置基础设施）
+### Phase 2.5：统一本地存储层（可考虑）
 
 > 目标：解决数据存储碎片化问题，为用户自定义 provider、会话管理、模型缓存等提供统一的持久化基础。
 
@@ -299,12 +299,6 @@ Phase 3.3 成本追踪  ──────────────────�
 
 ```
 internal/
-├── store/                      # [新增] 统一本地存储层（Phase 2.5）
-│   ├── store.go                # 数据库初始化 + 通用接口
-│   ├── providers.go            # provider CRUD
-│   ├── sessions.go             # 替代 JSONSessionStore
-│   ├── migrations.go           # schema 版本管理
-│   └── store_test.go           # [新增]
 ├── provider/
 │   ├── types.go                # 扩展 ModelDescriptor
 │   ├── errors.go               # [新增] ProviderError
@@ -333,7 +327,5 @@ internal/
 1. **最小闭环**：每次改动保持主链路可用（`TUI → Runtime → ProviderFactory → Registry.Build → Driver`），不做无关重构。Runtime 通过 `ProviderFactory` 接口解耦，不直接依赖 `Service`。
 2. **不提前泛化**：当前只有 1 个 driver、4 个内置 provider，不为"未来可能的多 driver 场景"引入复杂抽象。
 3. **务实优先**：错误码只区分可重试/不可重试；重试走 driver 内部 Transport 替换；API Key 管理保持环境变量方案，仅补充安全加固。
-4. **统一存储**：引入 SQLite 统一管理结构化数据（providers、sessions、cache），避免文件散落和格式碎片化。`config.yaml` 保留用于少量人类可编辑的启动配置。
-5. **配置安全**：遵循 AGENTS.md 规则，明文 API Key 不提交、不落盘日志。当前通过环境变量名入配置；后续 API Key 加密存储到 SQLite，密钥派生自机器指纹。
-6. **测试同步**：修改 `provider`、`tools`、`runtime` 时同步补充测试。
-7. **渐进升级**：通过 `CredentialResolver` 接口预留升级路径，当前从环境变量读取，后续切换到 SQLite 加密存储。不引入系统密钥环等平台特定依赖。
+4. **配置安全**：遵循 AGENTS.md 规则，明文 API Key 不提交、不落盘日志。当前通过环境变量名入配置；后续 API Key 加密存储到 SQLite，密钥派生自机器指纹。
+5. **测试同步**：修改 `provider`、`tools`、`runtime` 时同步补充测试。
