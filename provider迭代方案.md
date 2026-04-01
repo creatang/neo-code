@@ -58,8 +58,6 @@ TUI → Runtime → ProviderFactory(Build) → Registry.Build → Driver(OpenAI-
 | **开源工程化版** | 动态注册 + 本地持久化 + 生命周期管理 | OpenCode、Pi-Mono | 中小团队 / 二次开发 |
 | **企业级生产版** | 全生命周期 + 服务治理 + 合规审计 | GitHub Copilot 企业版 | 大型组织 |
 
-NeoCode 定位为**个人轻量版**，当前架构与此匹配。应预留向「开源工程化版」演进的能力。
-
 ### 与主流实现的差距
 
 | 维度 | 主流实践 | NeoCode 现状 | 差距 | 优先级 |
