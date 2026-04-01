@@ -293,10 +293,3 @@ Cursor IDE → Cursor Cloud (路由层) → OpenAI / Anthropic API
 - [Agent 系统架构对比](https://cuckoo.network/blog/2025/06/03/coding-agent)
 
 ---
-
-## 6. 修订记录
-
-| 日期 | 修订内容 |
-|------|---------|
-| 2026-04-01 | 初版发布 |
-| 2026-04-01 | 修正多项不准确描述：① OpenCode 的 provider 实现方式——不是"Vercel AI SDK"，而是各厂商官方 Go SDK；不是"每个 provider 独立实现"，GROQ/OpenRouter/xAI/Local 复用 openai.Client；补充了用户自定义 provider 的三种配置方式（环境变量/config.toml/opencode.json）；② Aider 不是"零 provider 适配代码"，而是"LiteLLM 通信 + 丰富的自研适配层"（模型发现、成本追踪、无限续写、推理模型适配等）；③ Cline 支持 20+ provider（非 10+），补充了 OpenAI 兼容端点的自定义支持和 MCP 扩展工具；④ 总览表新增"自定义 Provider"行；⑤ 补充说明注释区分 OpenCode/NeoCode/Cline 在 SDK 使用方式上的差异 |
