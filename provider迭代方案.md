@@ -171,12 +171,9 @@ type ModelDescriptor struct {
 }
 ```
 
-- 内置一份静态元数据映射（Go map），仅覆盖高频模型
-- 未命中的模型保持原有行为（仅 ID + Name），向后兼容
-
 **涉及文件**：
 - `internal/provider/types.go` — 扩展 `ModelDescriptor`
-- `internal/provider/metadata.go` — 新增，静态元数据表 + 查询函数
+- `internal/provider/metadata.go` — 新增
 - `internal/provider/service.go` — `modelDescriptors()` 注入元数据
 
 #### 2.2 动态模型发现
