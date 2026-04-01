@@ -217,6 +217,210 @@ Windsurf IDE → Cascade Engine → Codeium Cloud → 自研模型 / 第三方 A
 
 ---
 
+## 2.8 供应商与模型管理
+
+### 2.8.1 供应商管理机制
+
+各 Agent 在供应商注册、发现和配置方面的实现差异:
+
+| 维度 | NeoCode | OpenCode | Aider | Claude Code | Cline | Cursor | Windsurf |
+|------|---------|----------|-------|-------------|-------|--------|----------|
+| **供应商注册** | Registry + DriverDefinition | 预注册 + 用户自定义配置 | LiteLLM 内置 + model-metadata.json | 硬编码 (仅 Anthropic 生态) | 预注册工厂模式 | 云端路由 | 云端路由 |
+| **供应商配置存储** | YAML (`~/.neocode/config.yaml`) | config.toml + opencode.json + auth.json | `.env` + `litellm` 配置 | 环境变量 + 客户端配置 | VS Code globalState | 云端账户系统 | 云端账户系统 |
+| **供应商发现** | 预定义列表 (4个内置) | 75+ 预注册 + 用户自定义 | 200+ 模型,模糊匹配 | 单一供应商 | 枚举列表 (20+) | 不暴露 | 不暴露 |
+| **自定义供应商支持** | 不持久化 (已知缺陷) | 完整支持 (3种配置方式) | 完整支持 (LiteLLM 配置) | 不支持 | OpenAI 兼容端点 | 不支持 | 不支持 |
+
+### NeoCode 的供应商管理
+
+```go
+// Registry 注册机制
+type Registry struct {
+    drivers map[string]DriverDefinition
+}
+
+type DriverDefinition struct {
+    Name        string
+    Builder     DriverBuilder
+    Description string
+}
+```
+
+- **当前实现**: 仅注册一个 `openai` 驱动,通过 `base_url` 适配不同厂商
+- **配置方式**: `ProviderConfig` 中指定 `driver: openai` 和 `base_url`
+- **缺陷**: 用户自定义 provider 的配置字段带 `yaml:"-"` 标签,不持久化
+
+### OpenCode 的供应商管理
+
+```toml
+# config.toml 示例
+[providers.openai]
+api_key_env = "OPENAI_API_KEY"
+base_url = "https://api.openai.com/v1"
+
+[providers.custom]
+api_key = "sk-xxx"  # 或使用 api_key_env
+base_url = "https://custom-llm.example.com/v1"
+```
+
+- **三层配置**:
+  1. 环境变量 (`OPENAI_API_KEY` + `OPENAI_BASE_URL`)
+  2. `config.toml` (结构化配置)
+  3. `opencode.json` (使用 `@ai-sdk/openai-compatible`)
+- **凭据存储**: `~/.local/share/opencode/auth.json` (OAuth 场景)
+- **模型格式**: `vendor/model-name` (如 `anthropic/claude-sonnet-4.6`)
+
+### Aider 的供应商管理
+
+```bash
+# LiteLLM 支持的模型格式
+aider --model openai/gpt-4
+aider --model anthropic/claude-3-sonnet
+aider --model openrouter/anthropic/claude-3.5-sonnet
+```
+
+- **核心机制**: 完全委托给 LiteLLM,上层无供应商概念
+- **模型发现**: `Model` 类实现模糊匹配和别名系统 (如 `sonnet` → Claude 3 Sonnet)
+- **元数据管理**: `model-metadata.json` 存储技术规格和成本信息
+
+### Cline 的供应商管理
+
+```typescript
+// 工厂模式创建 provider
+export function buildApiHandler(options: ApiOptions): ApiHandler {
+  switch (options.apiProvider) {
+    case 'anthropic':
+      return new AnthropicProvider(options)
+    case 'openai':
+      return new OpenAiProvider(options) // 支持 openAiBaseUrl
+    case 'bedrock':
+      return new BedrockProvider(options)
+    // ... 20+ provider
+  }
+}
+```
+
+- **枚举驱动**: `ApiProvider` 枚举定义所有支持的供应商
+- **自定义端点**: 选择 `openai` 类型 + 配置 `openAiBaseUrl`
+- **扩展限制**: 添加全新协议的供应商需修改核心代码
+
+---
+
+## 2.8.2 模型信息管理
+
+| 维度 | NeoCode | OpenCode | Aider | Claude Code | Cline | Cursor | Windsurf |
+|------|---------|----------|-------|-------------|-------|--------|----------|
+| **模型列表来源** | 硬编码 (4个) | 预注册 + 用户自定义 | LiteLLM 内置 + metadata | Claude 全系列 | 预定义列表 | 不暴露 | 不暴露 |
+| **模型元数据** | 无 | Token 限制等基础信息 | 完整技术规格 + 成本 | Prompt cache 配置 | 上下文窗口信息 | 不暴露 | 不暴露 |
+| **模型选择方式** | 配置文件 | CLI 参数 / 配置文件 | CLI 参数 (模糊匹配) | CLI 参数 | UI 下拉选择 | UI 选择 | UI 选择 |
+| **动态模型发现** | 不支持 | 不支持 | LiteLLM 自动发现 | 不适用 | 不支持 | 不暴露 | 不暴露 |
+
+### Aider 的模型元数据管理 (最完善)
+
+```json
+// model-metadata.json 示例
+{
+  "gpt-4": {
+    "max_tokens": 8192,
+    "input_cost_per_token": 0.00003,
+    "output_cost_per_token": 0.00006,
+    "supports_function_calling": true,
+    "supports_vision": true
+  }
+}
+```
+
+- **技术规格**: 上下文窗口、输出限制、能力标志
+- **成本计算**: 输入/输出 token 单价,实时追踪成本
+- **推理模型**: 为 o1/o3/R1 配置 `thinking_tokens`、`reasoning_effort`
+- **提示缓存**: Anthropic 提示缓存配置
+
+## 2.8.3 API Key 管理机制
+
+| 维度 | NeoCode | OpenCode | Aider | Claude Code | Cline | Cursor | Windsurf |
+|------|---------|----------|-------|-------------|-------|--------|----------|
+| **存储方式** | 环境变量 | 环境变量 + 配置文件 + auth.json | 环境变量 + .env | 环境变量 + 客户端认证 | VS Code SecretStorage | 云端托管 / 用户 Key | 云端托管 |
+| **安全级别** | 低 | 中 (OAuth 加固) | 低 | 极高 (二进制认证) | 中 (OS 密钥环) | 高 | 高 |
+| **凭据轮换** | 手动 | 手动 / OAuth 刷新 | 手动 | 自动 (订阅制) | 手动 | 自动 | 自动 |
+| **多账户支持** | 不支持 | 支持 (auth.json) | 支持 | 支持 (订阅切换) | 支持 | 支持 | 支持 |
+
+### 环境变量方式 (NeoCode / Aider / OpenCode 部分场景)
+
+```bash
+# 标准做法
+export ANTHROPIC_API_KEY="sk-ant-xxx"
+export OPENAI_API_KEY="sk-xxx"
+
+# NeoCode 配置中引用环境变量名
+providers:
+  anthropic:
+    api_key_env: "ANTHROPIC_API_KEY"  # 存储变量名,不是值
+```
+
+- **优点**: 简单通用,符合 CLI 工具惯例
+- **缺点**:
+  - 进程环境可见 (`/proc/*/environ`)
+  - 配置文件泄露环境变量名
+  - 无加密保护
+  - 难以管理多账户
+
+### 配置文件方式 (OpenCode)
+
+```toml
+# config.toml
+[providers.openai]
+api_key = "sk-xxx"  # 明文存储,不推荐
+
+# 推荐方式: 使用环境变量引用
+[providers.openai]
+api_key_env = "OPENAI_API_KEY"
+```
+
+- **凭据存储**: `~/.local/share/opencode/auth.json` (OAuth 场景)
+- **安全建议**: 生产环境优先使用环境变量引用 (`api_key_env`)
+
+### VS Code SecretStorage (Cline)
+
+```typescript
+// 使用 VS Code 的 secretStorage API
+const secretStorage = context.secrets
+await secretStorage.store('apiKey', 'sk-xxx')
+const key = await secretStorage.get('apiKey')
+```
+
+- **底层实现**: 操作系统密钥环
+  - Windows: Windows Credential Manager
+  - macOS: Keychain
+  - Linux: Secret Service API (如 GNOME Keyring)
+- **优点**: 操作系统级加密保护
+- **缺点**: 仅适用于 VS Code 生态
+
+### 订阅制认证 (Claude Code / Cursor / Windsurf)
+
+```
+Claude Code 认证流程:
+1. 用户订阅 Claude Pro/Max
+2. 客户端获取 OAuth token
+3. 请求中携带原生客户端证明
+   - Bun Zig 原生 HTTP 栈替换 cch=00000 占位符
+   - 服务端验证二进制签名
+```
+
+- **优点**: 最高安全级别,无 API Key 泄露风险
+- **缺点**: 完全依赖供应商,无法自托管
+
+### Claude Code 的原生客户端认证
+
+```typescript
+// 请求发出前动态计算哈希证明
+headers["cch"] = calculateClientAttestationHash(request)
+```
+
+- **机制**: 二进制级别的请求证明,证明请求来自真实 Claude Code 客户端
+- **防伪造**: 无法用 curl/Postman 等工具伪造请求
+- **适用场景**: 商业 CLI 工具的防破解措施
+
+---
+
 ## 3. 关键设计维度对比
 
 ### 3.1 Provider 抽象策略
