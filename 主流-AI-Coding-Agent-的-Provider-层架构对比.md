@@ -247,7 +247,7 @@ type DriverDefinition struct {
 
 - **当前实现**: 仅注册一个 `openai` 驱动,通过 `base_url` 适配不同厂商
 - **配置方式**: `ProviderConfig` 中指定 `driver: openai` 和 `base_url`
-- **缺陷**: 用户自定义 provider 的配置字段带 `yaml:"-"` 标签,不持久化
+- **缺陷**: 不支持用户自定义 provider 
 
 ### OpenCode 的供应商管理
 
