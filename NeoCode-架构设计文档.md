@@ -186,7 +186,7 @@ neocode/
 
 **职责**: 定义 LLM Provider 的统一接口和类型系统，支持多协议驱动扩展。
 
-#### 3.3.1 V1 接口
+#### 3.3.1  接口
 
 ```go
 type Provider interface {
@@ -194,7 +194,7 @@ type Provider interface {
 }
 ```
 
-#### 3.3.2 V1 核心类型
+#### 3.3.2 核心类型
 
 | 类型 | 说明 |
 |------|------|
@@ -208,23 +208,8 @@ type Provider interface {
 | `ProviderCatalogItem` | Provider 目录项 {ID, Name, Models[]} |
 | `ProviderSelection` | 选择结果 {ProviderID, ModelID} |
 
-#### 3.3.3 V2 类型系统 (v2_types.go — 预留)
 
-```go
-type ProviderV2 interface {
-    CompleteTurn(ctx context.Context, req TurnRequest, events chan<- StreamEventV2) (TurnResponse, error)
-}
-```
-
-V2 引入了更丰富的类型:
-- `TurnItem` + `ContentPart` (text/reasoning_summary/tool_call/tool_result/artifact)
-- `ArtifactRef` (file/image/url)
-- `StopReason` (10 种细粒度停止原因)
-- `CapabilitySet` (9 种能力标记: tool_call, parallel_tool_calls, reasoning, vision...)
-- `StreamEventV2` (7 种细粒度流式事件)
-- `ResponseHandle` 支持 continuation
-
-#### 3.3.4 Registry — 驱动注册表
+#### 3.3.3 Registry — 驱动注册表
 
 ```go
 type Builder func(ctx context.Context, cfg config.ResolvedProviderConfig) (Provider, error)
@@ -242,7 +227,7 @@ type Registry struct { drivers map[string]DriverDefinition }
 
 **好处**: 新增协议只需写一个新的 `DriverDefinition` 并 `Register`，零修改核心代码。
 
-#### 3.3.5 错误体系
+#### 3.3.4 错误体系
 
 ```go
 type ProviderError struct {
