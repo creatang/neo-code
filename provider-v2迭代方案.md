@@ -63,6 +63,31 @@ Provider V2 的职责固定为以下四类：
 - 解析原生响应与流式事件
 - 抹平 tool use / function calling / response item 等协议差异
 
+### 5.1.1 思考字段归一化
+
+不同 provider 或兼容端点可能使用不同字段承载思考内容，例如：
+
+- `think`
+- `thinking`
+- `reasoning`
+- 厂商原生 content block 中的 thinking 类 block
+
+Provider V2 要求各 driver 在内部完成这些原始字段的提取与归一化，不将字段名差异泄漏到 runtime、tui 或上层业务。
+
+归一化规则如下：
+
+1. 原始响应中的思考内容统一映射到 V2 的 reasoning 通道。
+2. 完整思考结果进入 `ContentPart` 的 `reasoning_summary` 类型。
+3. 流式思考增量统一通过 `reasoning_delta` 事件输出。
+4. runtime 和 tui 只消费归一化后的 reasoning 内容，不感知 `think`、`thinking`、`reasoning` 等原始字段。
+5. 无法安全展示的原始思考内容不得直接穿透到通用文本通道，避免与最终回答混排。
+
+该规则适用于：
+
+- `openai_responses` 对 reasoning item / summary 的适配
+- `anthropic_messages` 对 thinking block 的适配
+- `openai_chat_compat` 对非标准兼容端点返回字段的兼容提取
+
 ### 5.2 执行元数据归一化
 
 - 暴露 typed stop reason
