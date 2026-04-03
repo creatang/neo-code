@@ -269,7 +269,6 @@ Provider V2 采用双栈兼容：
 ### Phase 0：类型落盘
 
 - 新增 `docs/provider-v2-design.md`
-- 新增 `internal/provider/v2_types.go`
 - 不改现有运行逻辑
 
 ### Phase 1：双栈接入
