@@ -1,1 +1,1 @@
-<img width="977" height="488" alt="image" src="https://github.com/user-attachments/assets/5700128a-c49b-490f-b07d-074a4e59810c" />
+<img width="2086" height="1185" alt="burndown_chart" src="https://github.com/user-attachments/assets/53903b45-a8d0-4b15-820f-19dfc74664b0" />
