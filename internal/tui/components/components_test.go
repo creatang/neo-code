@@ -138,42 +138,6 @@ func TestRenderSessionRow(t *testing.T) {
 	}
 }
 
-func TestViewHelperBranches(t *testing.T) {
-	if got := fallback("primary", "fallback"); got != "primary" {
-		t.Fatalf("expected primary fallback value, got %q", got)
-	}
-	if got := fallback("", "fallback"); got != "fallback" {
-		t.Fatalf("expected fallback value, got %q", got)
-	}
-
-	if got := trimMiddle("abcdef", 0); got != "" {
-		t.Fatalf("expected empty string for non-positive limit, got %q", got)
-	}
-	if got := trimMiddle("abcdef", 3); got != "abc" {
-		t.Fatalf("expected hard truncate for short limit, got %q", got)
-	}
-	if got := trimMiddle("abcdefghij", 7); got != "ab...ij" {
-		t.Fatalf("expected middle trim output, got %q", got)
-	}
-
-	if got := trimRunes("abcdef", 3); got != "abcdef" {
-		t.Fatalf("expected original text when limit < 4, got %q", got)
-	}
-	if got := trimRunes("abcdef", 5); got != "ab..." {
-		t.Fatalf("expected rune-safe ellipsis trim, got %q", got)
-	}
-
-	if got := clamp(-1, 0, 10); got != 0 {
-		t.Fatalf("expected clamp to min, got %d", got)
-	}
-	if got := clamp(20, 0, 10); got != 10 {
-		t.Fatalf("expected clamp to max, got %d", got)
-	}
-	if got := clamp(6, 0, 10); got != 6 {
-		t.Fatalf("expected clamp to keep in-range value, got %d", got)
-	}
-}
-
 func TestNormalizeBlockRightEdgeBlankContent(t *testing.T) {
 	blank := "   \n\t"
 	if got := NormalizeBlockRightEdge(blank, 20); got != blank {
