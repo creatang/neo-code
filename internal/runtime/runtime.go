@@ -8,6 +8,7 @@ import (
 	"math/rand/v2"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -16,6 +17,8 @@ import (
 	agentcontext "neo-code/internal/context"
 	contextcompact "neo-code/internal/context/compact"
 	"neo-code/internal/provider"
+	providertypes "neo-code/internal/provider/types"
+	agentsession "neo-code/internal/session"
 	"neo-code/internal/tools"
 )
 
@@ -29,21 +32,92 @@ const (
 	providerRetryMaxWait = 5 * time.Second
 )
 
-var runtimeSessionWorkdirs = struct {
-	mu   sync.RWMutex
-	data map[string]string
-}{
-	data: make(map[string]string),
+// streamAccumulator 在流式事件处理过程中累积本轮对话需要持久化的助手消息状态，
+// 包括文本内容和工具调用列表。
+type streamAccumulator struct {
+	content   strings.Builder
+	toolCalls map[int]*providertypes.ToolCall
+}
+
+// newStreamAccumulator 创建并初始化一个空的流式事件累积器。
+func newStreamAccumulator() *streamAccumulator {
+	return &streamAccumulator{
+		toolCalls: make(map[int]*providertypes.ToolCall),
+	}
+}
+
+// accumulateTextDelta 累积文本增量片段。
+func (a *streamAccumulator) accumulateTextDelta(text string) {
+	a.content.WriteString(text)
+}
+
+// ensureToolCall 返回指定索引的工具调用条目，不存在时会先创建占位对象。
+func (a *streamAccumulator) ensureToolCall(index int) *providertypes.ToolCall {
+	call, exists := a.toolCalls[index]
+	if !exists {
+		call = &providertypes.ToolCall{}
+		a.toolCalls[index] = call
+	}
+	return call
+}
+
+// accumulateToolCallStart 记录新发现的工具调用（首次出现时创建条目）。
+func (a *streamAccumulator) accumulateToolCallStart(index int, id, name string) {
+	call := a.ensureToolCall(index)
+	if strings.TrimSpace(id) != "" {
+		call.ID = id
+	}
+	if strings.TrimSpace(name) != "" {
+		call.Name = name
+	}
+}
+
+// accumulateToolCallDelta 累积工具调用参数增量。
+func (a *streamAccumulator) accumulateToolCallDelta(index int, id, argumentsDelta string) {
+	call := a.ensureToolCall(index)
+	if strings.TrimSpace(id) != "" {
+		call.ID = id
+	}
+	call.Arguments += argumentsDelta
+}
+
+// buildMessage 从累积状态构建最终的 assistant Message 对象，并校验工具调用元数据是否完整。
+func (a *streamAccumulator) buildMessage() (providertypes.Message, error) {
+	ordered := make([]int, 0, len(a.toolCalls))
+	for index := range a.toolCalls {
+		ordered = append(ordered, index)
+	}
+	sort.Ints(ordered)
+
+	message := providertypes.Message{
+		Role:    providertypes.RoleAssistant,
+		Content: a.content.String(),
+	}
+	for _, index := range ordered {
+		call := a.toolCalls[index]
+		if call == nil {
+			continue
+		}
+		if strings.TrimSpace(call.ID) == "" {
+			return providertypes.Message{}, fmt.Errorf("runtime: provider emitted tool call %d without id", index)
+		}
+		if strings.TrimSpace(call.Name) == "" {
+			return providertypes.Message{}, fmt.Errorf("runtime: provider emitted tool call %d without name", index)
+		}
+		message.ToolCalls = append(message.ToolCalls, *call)
+	}
+	return message, nil
 }
 
 type Runtime interface {
 	Run(ctx context.Context, input UserInput) error
 	Compact(ctx context.Context, input CompactInput) (CompactResult, error)
+	ResolvePermission(ctx context.Context, input PermissionResolutionInput) error
 	CancelActiveRun() bool
 	Events() <-chan RuntimeEvent
-	ListSessions(ctx context.Context) ([]SessionSummary, error)
-	LoadSession(ctx context.Context, id string) (Session, error)
-	SetSessionWorkdir(ctx context.Context, sessionID string, workdir string) (Session, error)
+	ListSessions(ctx context.Context) ([]agentsession.Summary, error)
+	LoadSession(ctx context.Context, id string) (agentsession.Session, error)
+	SetSessionWorkdir(ctx context.Context, sessionID string, workdir string) (agentsession.Session, error)
 }
 
 type UserInput struct {
@@ -59,7 +133,7 @@ type ProviderFactory interface {
 
 type Service struct {
 	configManager   *config.Manager      // 配置管理器，提供当前选中的 provider、model、workdir 等配置读取能力。
-	sessionStore    Store                // 会话持久化接口，负责保存和加载聊天会话。
+	sessionStore    agentsession.Store   // 会话持久化接口，负责保存和加载聊天会话。
 	toolManager     tools.Manager        // 工具管理器，统一工具 schema 暴露与执行入口。
 	providerFactory ProviderFactory      // Provider 工厂接口，根据配置动态创建具体的 provider 实例。
 	contextBuilder  agentcontext.Builder // 上下文构建器，负责组装 system prompt 与本轮发给模型的消息上下文。
@@ -75,7 +149,7 @@ type Service struct {
 func NewWithFactory(
 	configManager *config.Manager,
 	toolManager tools.Manager,
-	sessionStore Store,
+	sessionStore agentsession.Store,
 	providerFactory ProviderFactory,
 	contextBuilder agentcontext.Builder,
 ) *Service {
@@ -86,7 +160,7 @@ func NewWithFactory(
 		toolManager = tools.NewRegistry()
 	}
 	if contextBuilder == nil {
-		contextBuilder = agentcontext.NewBuilder()
+		contextBuilder = agentcontext.NewBuilderWithToolPolicies(toolManager)
 	}
 
 	return &Service{
@@ -121,8 +195,8 @@ func (s *Service) Run(ctx context.Context, input UserInput) error {
 		return s.handleRunError(ctx, input.RunID, input.SessionID, err)
 	}
 
-	userMessage := provider.Message{
-		Role:    provider.RoleUser,
+	userMessage := providertypes.Message{
+		Role:    providertypes.RoleUser,
 		Content: input.Content,
 	}
 	session.Messages = append(session.Messages, userMessage)
@@ -157,6 +231,9 @@ func (s *Service) Run(ctx context.Context, input UserInput) error {
 				Provider: cfg.SelectedProvider,
 				Model:    cfg.CurrentModel,
 			},
+			Compact: agentcontext.CompactOptions{
+				DisableMicroCompact: cfg.Context.Compact.MicroCompactDisabled,
+			},
 		})
 		if err != nil {
 			return s.handleRunError(ctx, input.RunID, session.ID, err)
@@ -169,7 +246,7 @@ func (s *Service) Run(ctx context.Context, input UserInput) error {
 			return s.handleRunError(ctx, input.RunID, session.ID, err)
 		}
 
-		resp, err := s.callProviderWithRetry(ctx, input.RunID, session.ID, provider.ChatRequest{
+		acc, err := s.callProviderWithRetry(ctx, input.RunID, session.ID, providertypes.ChatRequest{
 			Model:        cfg.CurrentModel,
 			SystemPrompt: builtContext.SystemPrompt,
 			Messages:     builtContext.Messages,
@@ -186,9 +263,12 @@ func (s *Service) Run(ctx context.Context, input UserInput) error {
 		session.Provider = cfg.SelectedProvider
 		session.Model = cfg.CurrentModel
 
-		assistant := resp.Message
+		assistant, err := acc.buildMessage()
+		if err != nil {
+			return s.handleRunError(ctx, input.RunID, session.ID, err)
+		}
 		if strings.TrimSpace(assistant.Role) == "" {
-			assistant.Role = provider.RoleAssistant
+			assistant.Role = providertypes.RoleAssistant
 		}
 
 		if strings.TrimSpace(assistant.Content) != "" || len(assistant.ToolCalls) > 0 {
@@ -218,18 +298,13 @@ func (s *Service) Run(ctx context.Context, input UserInput) error {
 			}
 			s.emit(ctx, EventToolStart, input.RunID, session.ID, call)
 
-			runCtx, cancel := context.WithTimeout(ctx, time.Duration(cfg.ToolTimeoutSec)*time.Second)
-			result, execErr := s.toolManager.Execute(runCtx, tools.ToolCallInput{
-				ID:        call.ID,
-				Name:      call.Name,
-				Arguments: []byte(call.Arguments),
-				Workdir:   activeWorkdir,
-				SessionID: session.ID,
-				EmitChunk: func(chunk []byte) {
-					s.emit(ctx, EventToolChunk, input.RunID, session.ID, string(chunk))
-				},
+			result, execErr := s.executeToolCallWithPermission(ctx, permissionExecutionInput{
+				RunID:       input.RunID,
+				SessionID:   session.ID,
+				Call:        call,
+				Workdir:     activeWorkdir,
+				ToolTimeout: time.Duration(cfg.ToolTimeoutSec) * time.Second,
 			})
-			cancel()
 			if s.isRunCanceled(execErr) {
 				return s.handleRunError(ctx, input.RunID, session.ID, execErr)
 			}
@@ -243,14 +318,11 @@ func (s *Service) Run(ctx context.Context, input UserInput) error {
 				result.Content = execErr.Error()
 			}
 			if permissionEvent, ok := permissionEventFromError(execErr); ok {
-				if permissionEvent.decision == "ask" {
-					s.emit(ctx, EventPermissionRequest, input.RunID, session.ID, permissionEvent.toRequestPayload())
-				}
 				s.emit(ctx, EventPermissionResolved, input.RunID, session.ID, permissionEvent.toResolvedPayload())
 			}
 
-			toolMessage := provider.Message{
-				Role:       provider.RoleTool,
+			toolMessage := providertypes.Message{
+				Role:       providertypes.RoleTool,
 				Content:    result.Content,
 				ToolCallID: call.ID,
 				IsError:    result.IsError,
@@ -295,65 +367,44 @@ func (s *Service) Events() <-chan RuntimeEvent {
 	return s.events
 }
 
-func (s *Service) ListSessions(ctx context.Context) ([]SessionSummary, error) {
+func (s *Service) ListSessions(ctx context.Context) ([]agentsession.Summary, error) {
 	return s.sessionStore.ListSummaries(ctx)
 }
 
-func (s *Service) LoadSession(ctx context.Context, id string) (Session, error) {
+func (s *Service) LoadSession(ctx context.Context, id string) (agentsession.Session, error) {
 	session, err := s.sessionStore.Load(ctx, id)
 	if err != nil {
-		return Session{}, err
+		return agentsession.Session{}, err
 	}
-	session.Workdir = s.sessionWorkdir(id, session.Workdir)
 	return session, nil
 }
 
-func (s *Service) SetSessionWorkdir(ctx context.Context, sessionID string, workdir string) (Session, error) {
+func (s *Service) SetSessionWorkdir(ctx context.Context, sessionID string, workdir string) (agentsession.Session, error) {
 	sessionID = strings.TrimSpace(sessionID)
 	if sessionID == "" {
-		return Session{}, errors.New("runtime: session id is empty")
+		return agentsession.Session{}, errors.New("runtime: session id is empty")
 	}
 
 	session, err := s.sessionStore.Load(ctx, sessionID)
 	if err != nil {
-		return Session{}, err
+		return agentsession.Session{}, err
 	}
-	session.Workdir = s.sessionWorkdir(sessionID, session.Workdir)
 
 	cfg := s.configManager.Get()
 	resolved, err := resolveWorkdirForSession(cfg.Workdir, session.Workdir, workdir)
 	if err != nil {
-		return Session{}, err
+		return agentsession.Session{}, err
 	}
 	if session.Workdir == resolved {
 		return session, nil
 	}
 
 	session.Workdir = resolved
-	s.setSessionWorkdir(sessionID, resolved)
-	return session, nil
-}
-
-func (s *Service) sessionWorkdir(sessionID string, fallback string) string {
-	key := s.sessionWorkdirKey(sessionID)
-	runtimeSessionWorkdirs.mu.RLock()
-	value, ok := runtimeSessionWorkdirs.data[key]
-	runtimeSessionWorkdirs.mu.RUnlock()
-	if ok {
-		return strings.TrimSpace(value)
+	session.UpdatedAt = time.Now()
+	if err := s.sessionStore.Save(ctx, &session); err != nil {
+		return agentsession.Session{}, err
 	}
-	return strings.TrimSpace(fallback)
-}
-
-func (s *Service) setSessionWorkdir(sessionID string, workdir string) {
-	key := s.sessionWorkdirKey(sessionID)
-	runtimeSessionWorkdirs.mu.Lock()
-	runtimeSessionWorkdirs.data[key] = strings.TrimSpace(workdir)
-	runtimeSessionWorkdirs.mu.Unlock()
-}
-
-func (s *Service) sessionWorkdirKey(sessionID string) string {
-	return fmt.Sprintf("%p:%s", s, strings.TrimSpace(sessionID))
+	return session, nil
 }
 
 func (s *Service) loadOrCreateSession(
@@ -362,37 +413,38 @@ func (s *Service) loadOrCreateSession(
 	title string,
 	defaultWorkdir string,
 	requestedWorkdir string,
-) (Session, error) {
+) (agentsession.Session, error) {
 	if strings.TrimSpace(sessionID) == "" {
 		sessionWorkdir, err := resolveWorkdirForSession(defaultWorkdir, "", requestedWorkdir)
 		if err != nil {
-			return Session{}, err
+			return agentsession.Session{}, err
 		}
-		session := newSessionWithWorkdir(title, sessionWorkdir)
-		s.setSessionWorkdir(session.ID, sessionWorkdir)
+		session := agentsession.NewWithWorkdir(title, sessionWorkdir)
 		if err := s.sessionStore.Save(ctx, &session); err != nil {
-			return Session{}, err
+			return agentsession.Session{}, err
 		}
 		return session, nil
 	}
 	session, err := s.sessionStore.Load(ctx, sessionID)
 	if err != nil {
-		return Session{}, err
+		return agentsession.Session{}, err
 	}
-	session.Workdir = s.sessionWorkdir(sessionID, session.Workdir)
 	if strings.TrimSpace(requestedWorkdir) == "" && strings.TrimSpace(session.Workdir) != "" {
 		return session, nil
 	}
 
 	resolved, err := resolveWorkdirForSession(defaultWorkdir, session.Workdir, requestedWorkdir)
 	if err != nil {
-		return Session{}, err
+		return agentsession.Session{}, err
 	}
 	if session.Workdir == resolved {
 		return session, nil
 	}
 	session.Workdir = resolved
-	s.setSessionWorkdir(sessionID, resolved)
+	session.UpdatedAt = time.Now()
+	if err := s.sessionStore.Save(ctx, &session); err != nil {
+		return agentsession.Session{}, err
+	}
 	return session, nil
 }
 
@@ -417,21 +469,88 @@ func (s *Service) emit(ctx context.Context, kind EventType, runID string, sessio
 	}
 }
 
-// forwardProviderEvents 将 provider 流式事件转发为 runtime 事件。
+// handleProviderStreamEvent 解析并应用单条 provider 流式事件，缺失载荷或未知类型时返回错误。
+func handleProviderStreamEvent(
+	event providertypes.StreamEvent,
+	acc *streamAccumulator,
+	onTextDelta func(string),
+	onToolCallStart func(providertypes.ToolCallStartPayload),
+) error {
+	switch event.Type {
+	case providertypes.StreamEventTextDelta:
+		payload, err := event.TextDeltaValue()
+		if err != nil {
+			return err
+		}
+		if onTextDelta != nil {
+			onTextDelta(payload.Text)
+		}
+		if acc != nil {
+			acc.accumulateTextDelta(payload.Text)
+		}
+	case providertypes.StreamEventToolCallStart:
+		payload, err := event.ToolCallStartValue()
+		if err != nil {
+			return err
+		}
+		if onToolCallStart != nil {
+			onToolCallStart(payload)
+		}
+		if acc != nil {
+			acc.accumulateToolCallStart(payload.Index, payload.ID, payload.Name)
+		}
+	case providertypes.StreamEventToolCallDelta:
+		payload, err := event.ToolCallDeltaValue()
+		if err != nil {
+			return err
+		}
+		if acc != nil {
+			acc.accumulateToolCallDelta(payload.Index, payload.ID, payload.ArgumentsDelta)
+		}
+	case providertypes.StreamEventMessageDone:
+		if _, err := event.MessageDoneValue(); err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("runtime: unsupported provider stream event type %q", event.Type)
+	}
+	return nil
+}
+
+// forwardProviderEvents 将 provider 流式事件转发为 runtime 事件，同时向 accumulator 累积消息状态。
 // 使用 select 同时监听输入通道和 context 取消信号，确保 goroutine 不会因通道阻塞而泄漏。
-func (s *Service) forwardProviderEvents(ctx context.Context, runID string, sessionID string, input <-chan provider.StreamEvent, done chan<- struct{}) {
-	defer close(done)
+func (s *Service) forwardProviderEvents(
+	ctx context.Context,
+	runID string,
+	sessionID string,
+	input <-chan providertypes.StreamEvent,
+	done chan<- error,
+	acc *streamAccumulator,
+) {
+	var forwardErr error
+	defer func() {
+		done <- forwardErr
+	}()
+
 	for {
 		select {
 		case event, ok := <-input:
 			if !ok {
 				return
 			}
-			switch event.Type {
-			case provider.StreamEventTextDelta:
-				s.emit(ctx, EventAgentChunk, runID, sessionID, event.Text)
-			case provider.StreamEventToolCallStart:
-				s.emit(ctx, EventToolCallThinking, runID, sessionID, event.ToolName)
+			err := handleProviderStreamEvent(
+				event,
+				acc,
+				func(text string) {
+					s.emit(ctx, EventAgentChunk, runID, sessionID, text)
+				},
+				func(payload providertypes.ToolCallStartPayload) {
+					s.emit(ctx, EventToolCallThinking, runID, sessionID, payload.Name)
+				},
+			)
+			if err != nil && forwardErr == nil {
+				// 记录首个协议错误后继续排空事件通道，避免 provider 在后续发送时阻塞。
+				forwardErr = err
 			}
 		case <-ctx.Done():
 			return
@@ -489,18 +608,22 @@ func isRetryableProviderError(err error) bool {
 }
 
 // callProviderWithRetry 在可重试的 ProviderError 上自动重试 provider.Chat() 调用。
-// 每次重试都会重新构建 provider 实例和流式事件转发管道。
+// 每次重试都会重新创建 provider 实例、流式事件转发管道和累积器。
 // 非可重试错误、context 取消、重试耗尽时直接返回错误。
+// 返回值 acc 保存了本轮流式事件的完整累积状态，供调用方构建 assistant Message 使用。
 func (s *Service) callProviderWithRetry(
 	ctx context.Context,
 	runID string,
 	sessionID string,
-	req provider.ChatRequest,
-) (provider.ChatResponse, error) {
+	req providertypes.ChatRequest,
+) (*streamAccumulator, error) {
+	acc := newStreamAccumulator()
 	var lastErr error
 
 	for retryAttempt := 0; retryAttempt <= defaultProviderRetryMax; retryAttempt++ {
 		if retryAttempt > 0 {
+			// 重试时重置累积器，避免混入上轮数据
+			acc = newStreamAccumulator()
 			wait := providerRetryBackoff(retryAttempt)
 			s.emit(ctx, EventProviderRetry, runID, sessionID,
 				fmt.Sprintf("retrying provider call (attempt %d/%d, wait=%.1fs)...",
@@ -508,45 +631,54 @@ func (s *Service) callProviderWithRetry(
 
 			select {
 			case <-ctx.Done():
-				return provider.ChatResponse{}, ctx.Err()
+				return nil, ctx.Err()
 			case <-time.After(wait):
 			}
 		}
 
 		resolvedProvider, err := s.configManager.ResolvedSelectedProvider()
 		if err != nil {
-			return provider.ChatResponse{}, err
+			return nil, err
 		}
 
 		modelProvider, err := s.providerFactory.Build(ctx, resolvedProvider)
 		if err != nil {
-			return provider.ChatResponse{}, err
+			return nil, err
 		}
 
-		streamEvents := make(chan provider.StreamEvent, 32)
-		streamDone := make(chan struct{})
-		go s.forwardProviderEvents(ctx, runID, sessionID, streamEvents, streamDone)
+		streamEvents := make(chan providertypes.StreamEvent, 32)
+		streamDone := make(chan error, 1)
+		go s.forwardProviderEvents(ctx, runID, sessionID, streamEvents, streamDone, acc)
 
-		resp, err := modelProvider.Chat(ctx, req, streamEvents)
+		err = modelProvider.Chat(ctx, req, streamEvents)
 		close(streamEvents)
-		<-streamDone
+		forwardErr := <-streamDone
+		if forwardErr != nil {
+			if err != nil {
+				return nil, fmt.Errorf("runtime: provider stream handling failed after provider error: %v: %w", err, forwardErr)
+			}
+			return nil, forwardErr
+		}
 
 		if err == nil {
-			return resp, nil
+			return acc, nil
 		}
 
 		lastErr = err
 
 		// 非可重试错误或 context 已取消，立即返回。
 		if !isRetryableProviderError(err) {
-			return provider.ChatResponse{}, err
+			return nil, lastErr
 		}
 		if ctx.Err() != nil {
-			return provider.ChatResponse{}, ctx.Err()
+			return nil, ctx.Err()
 		}
 	}
 
-	return provider.ChatResponse{}, lastErr
+	if lastErr == nil {
+		lastErr = errors.New("max retries exceeded")
+	}
+	return nil, fmt.Errorf("runtime: max retries exhausted, last error: %w", lastErr)
 }
 
 // providerRetryBackoff 计算指数退避 + 随机抖动的等待时间。
@@ -578,6 +710,7 @@ type permissionEventView struct {
 	decision   string
 	reason     string
 	ruleID     string
+	scope      string
 	resolvedAs string
 }
 
@@ -609,6 +742,7 @@ func permissionEventFromError(err error) (permissionEventView, bool) {
 		decision:   decision,
 		reason:     reason,
 		ruleID:     strings.TrimSpace(permissionErr.RuleID()),
+		scope:      strings.TrimSpace(permissionErr.RememberScope()),
 		resolvedAs: resolvedAs,
 	}, true
 }
@@ -624,7 +758,7 @@ func (v permissionEventView) toRequestPayload() PermissionRequestPayload {
 		Decision:      v.decision,
 		Reason:        v.reason,
 		RuleID:        v.ruleID,
-		RememberScope: "",
+		RememberScope: v.scope,
 	}
 }
 
@@ -639,7 +773,7 @@ func (v permissionEventView) toResolvedPayload() PermissionResolvedPayload {
 		Decision:      v.decision,
 		Reason:        v.reason,
 		RuleID:        v.ruleID,
-		RememberScope: "",
+		RememberScope: v.scope,
 		ResolvedAs:    v.resolvedAs,
 	}
 }

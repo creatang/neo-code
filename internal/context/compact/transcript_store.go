@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"neo-code/internal/provider"
+	providertypes "neo-code/internal/provider/types"
 )
 
 const (
@@ -26,13 +26,13 @@ const (
 )
 
 type transcriptLine struct {
-	Index      int                 `json:"index"`
-	Timestamp  string              `json:"timestamp"`
-	Role       string              `json:"role"`
-	Content    string              `json:"content"`
-	ToolCalls  []provider.ToolCall `json:"tool_calls,omitempty"`
-	ToolCallID string              `json:"tool_call_id,omitempty"`
-	IsError    bool                `json:"is_error,omitempty"`
+	Index      int                      `json:"index"`
+	Timestamp  string                   `json:"timestamp"`
+	Role       string                   `json:"role"`
+	Content    string                   `json:"content"`
+	ToolCalls  []providertypes.ToolCall `json:"tool_calls,omitempty"`
+	ToolCallID string                   `json:"tool_call_id,omitempty"`
+	IsError    bool                     `json:"is_error,omitempty"`
 }
 
 // transcriptStore 只负责 compact 原始 transcript 的目录规划与安全落盘。
@@ -47,7 +47,7 @@ type transcriptStore struct {
 }
 
 // Save 按项目维度持久化当前 compact 前的 transcript，并返回 ID 与路径。
-func (s transcriptStore) Save(messages []provider.Message, sessionID string, workdir string) (string, string, error) {
+func (s transcriptStore) Save(messages []providertypes.Message, sessionID string, workdir string) (string, string, error) {
 	home, err := s.userHomeDir()
 	if err != nil {
 		return "", "", fmt.Errorf("compact: resolve user home: %w", err)
@@ -85,7 +85,7 @@ func (s transcriptStore) Save(messages []provider.Message, sessionID string, wor
 			Timestamp:  now,
 			Role:       message.Role,
 			Content:    message.Content,
-			ToolCalls:  append([]provider.ToolCall(nil), message.ToolCalls...),
+			ToolCalls:  append([]providertypes.ToolCall(nil), message.ToolCalls...),
 			ToolCallID: message.ToolCallID,
 			IsError:    message.IsError,
 		}

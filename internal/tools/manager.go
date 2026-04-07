@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"neo-code/internal/provider"
+	providertypes "neo-code/internal/provider/types"
 	"neo-code/internal/security"
 )
 
@@ -18,15 +18,21 @@ type SpecListInput struct {
 
 // Manager is the runtime-facing tool execution and schema exposure boundary.
 type Manager interface {
-	ListAvailableSpecs(ctx context.Context, input SpecListInput) ([]provider.ToolSpec, error)
+	ListAvailableSpecs(ctx context.Context, input SpecListInput) ([]providertypes.ToolSpec, error)
+	MicroCompactPolicy(name string) MicroCompactPolicy
 	Execute(ctx context.Context, input ToolCallInput) (ToolResult, error)
+	RememberSessionDecision(sessionID string, action security.Action, scope SessionPermissionScope) error
 }
 
 // Executor is the concrete tool execution layer under the manager.
 type Executor interface {
-	ListAvailableSpecs(ctx context.Context, input SpecListInput) ([]provider.ToolSpec, error)
+	ListAvailableSpecs(ctx context.Context, input SpecListInput) ([]providertypes.ToolSpec, error)
 	Execute(ctx context.Context, input ToolCallInput) (ToolResult, error)
 	Supports(name string) bool
+}
+
+type microCompactPolicyExecutor interface {
+	MicroCompactPolicy(name string) MicroCompactPolicy
 }
 
 // WorkspaceSandbox enforces workspace-oriented constraints before execution.
@@ -50,6 +56,7 @@ type PermissionDecisionError struct {
 	action   security.Action
 	reason   string
 	ruleID   string
+	scope    SessionPermissionScope
 }
 
 // Error returns a stable error message for the blocked tool call.
@@ -112,12 +119,21 @@ func (e *PermissionDecisionError) RuleID() string {
 	return strings.TrimSpace(e.ruleID)
 }
 
+// RememberScope 返回触发该权限结果时命中的会话记忆范围。
+func (e *PermissionDecisionError) RememberScope() string {
+	if e == nil {
+		return ""
+	}
+	return strings.TrimSpace(string(e.scope))
+}
+
 // DefaultManager routes tool calls through the permission engine, workspace
 // sandbox, and executor.
 type DefaultManager struct {
-	executor Executor
-	engine   security.PermissionEngine
-	sandbox  WorkspaceSandbox
+	executor         Executor
+	engine           security.PermissionEngine
+	sandbox          WorkspaceSandbox
+	sessionDecisions *sessionPermissionMemory
 }
 
 // NewManager creates a manager that wraps an executor with security checks.
@@ -137,18 +153,30 @@ func NewManager(executor Executor, engine security.PermissionEngine, sandbox Wor
 	}
 
 	return &DefaultManager{
-		executor: executor,
-		engine:   engine,
-		sandbox:  sandbox,
+		executor:         executor,
+		engine:           engine,
+		sandbox:          sandbox,
+		sessionDecisions: newSessionPermissionMemory(),
 	}, nil
 }
 
 // ListAvailableSpecs returns the currently visible tool specs from the executor.
-func (m *DefaultManager) ListAvailableSpecs(ctx context.Context, input SpecListInput) ([]provider.ToolSpec, error) {
+func (m *DefaultManager) ListAvailableSpecs(ctx context.Context, input SpecListInput) ([]providertypes.ToolSpec, error) {
 	if m == nil || m.executor == nil {
 		return nil, errors.New("tools: manager executor is nil")
 	}
 	return m.executor.ListAvailableSpecs(ctx, input)
+}
+
+// MicroCompactPolicy 返回工具的 micro compact 策略；无法判断时按默认可压缩处理。
+func (m *DefaultManager) MicroCompactPolicy(name string) MicroCompactPolicy {
+	if m == nil || m.executor == nil {
+		return MicroCompactPolicyCompact
+	}
+	if source, ok := m.executor.(microCompactPolicyExecutor); ok {
+		return source.MicroCompactPolicy(name)
+	}
+	return MicroCompactPolicyCompact
 }
 
 // Execute runs the tool if the permission engine allows it and the sandbox
@@ -175,6 +203,28 @@ func (m *DefaultManager) Execute(ctx context.Context, input ToolCallInput) (Tool
 		result.ToolCallID = input.ID
 		return result, err
 	}
+	// deny 规则始终优先，避免 session 记忆覆盖硬性安全策略。
+	if decision.Decision == security.DecisionDeny {
+		result := blockedToolResult(input, decision)
+		return result, permissionErrorFromDecision(decision)
+	}
+	// session 记忆仅用于自动处理 ask，不提升原本已 allow 的策略结果。
+	if decision.Decision == security.DecisionAsk && m.sessionDecisions != nil {
+		if rememberedDecision, rememberedScope, ok := m.sessionDecisions.resolve(input.SessionID, action); ok {
+			decision = security.CheckResult{
+				Decision: rememberedDecision,
+				Action:   action,
+				Reason:   sessionDecisionReason(rememberedScope),
+			}
+			if rememberedScope != "" {
+				decision.Rule = &security.Rule{
+					ID:       "session-memory:" + string(rememberedScope),
+					Decision: rememberedDecision,
+					Reason:   decision.Reason,
+				}
+			}
+		}
+	}
 	if decision.Decision != security.DecisionAllow {
 		result := blockedToolResult(input, decision)
 		return result, permissionErrorFromDecision(decision)
@@ -192,6 +242,17 @@ func (m *DefaultManager) Execute(ctx context.Context, input ToolCallInput) (Tool
 	}
 
 	return m.executor.Execute(ctx, input)
+}
+
+// RememberSessionDecision 记录会话内权限记忆，用于后续同类 action 快速决策。
+func (m *DefaultManager) RememberSessionDecision(sessionID string, action security.Action, scope SessionPermissionScope) error {
+	if m == nil {
+		return errors.New("tools: manager is nil")
+	}
+	if m.sessionDecisions == nil {
+		m.sessionDecisions = newSessionPermissionMemory()
+	}
+	return m.sessionDecisions.remember(sessionID, action, scope)
 }
 
 func blockedToolResult(input ToolCallInput, decision security.CheckResult) ToolResult {
@@ -219,6 +280,39 @@ func permissionErrorFromDecision(decision security.CheckResult) error {
 		action:   decision.Action,
 		reason:   decision.Reason,
 		ruleID:   ruleID,
+		scope:    extractRememberScope(decision),
+	}
+}
+
+// extractRememberScope 从决策规则中提取会话记忆范围。
+func extractRememberScope(decision security.CheckResult) SessionPermissionScope {
+	if decision.Rule == nil {
+		return ""
+	}
+	ruleID := strings.TrimSpace(decision.Rule.ID)
+	switch ruleID {
+	case "session-memory:" + string(SessionPermissionScopeOnce):
+		return SessionPermissionScopeOnce
+	case "session-memory:" + string(SessionPermissionScopeAlways):
+		return SessionPermissionScopeAlways
+	case "session-memory:" + string(SessionPermissionScopeReject):
+		return SessionPermissionScopeReject
+	default:
+		return ""
+	}
+}
+
+// sessionDecisionReason 生成会话记忆命中的统一原因文本。
+func sessionDecisionReason(scope SessionPermissionScope) string {
+	switch scope {
+	case SessionPermissionScopeOnce:
+		return "session permission remembered: once"
+	case SessionPermissionScopeAlways:
+		return "session permission remembered: always(session)"
+	case SessionPermissionScopeReject:
+		return "session permission remembered: reject"
+	default:
+		return "session permission remembered"
 	}
 }
 

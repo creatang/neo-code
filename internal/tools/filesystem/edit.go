@@ -55,6 +55,11 @@ func (t *EditTool) Schema() map[string]any {
 	}
 }
 
+// MicroCompactPolicy 声明编辑工具的历史结果默认参与 micro compact 清理。
+func (t *EditTool) MicroCompactPolicy() tools.MicroCompactPolicy {
+	return tools.MicroCompactPolicyCompact
+}
+
 func (t *EditTool) Execute(ctx context.Context, input tools.ToolCallInput) (tools.ToolResult, error) {
 	var args editInput
 	if err := json.Unmarshal(input.Arguments, &args); err != nil {

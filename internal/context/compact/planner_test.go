@@ -4,20 +4,20 @@ import (
 	"testing"
 
 	"neo-code/internal/config"
-	"neo-code/internal/provider"
+	providertypes "neo-code/internal/provider/types"
 )
 
 func TestCompactionPlannerKeepRecentPlan(t *testing.T) {
 	t.Parallel()
 
 	planner := compactionPlanner{}
-	plan, err := planner.Plan(ModeManual, []provider.Message{
-		{Role: provider.RoleUser, Content: "old request"},
-		{Role: provider.RoleAssistant, Content: "old answer"},
-		{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{{ID: "call-1", Name: "filesystem_read_file", Arguments: "{}"}}},
-		{Role: provider.RoleTool, ToolCallID: "call-1", Content: "tool result"},
-		{Role: provider.RoleUser, Content: "latest instruction"},
-		{Role: provider.RoleAssistant, Content: "latest answer"},
+	plan, err := planner.Plan(ModeManual, []providertypes.Message{
+		{Role: providertypes.RoleUser, Content: "old request"},
+		{Role: providertypes.RoleAssistant, Content: "old answer"},
+		{Role: providertypes.RoleAssistant, ToolCalls: []providertypes.ToolCall{{ID: "call-1", Name: "filesystem_read_file", Arguments: "{}"}}},
+		{Role: providertypes.RoleTool, ToolCallID: "call-1", Content: "tool result"},
+		{Role: providertypes.RoleUser, Content: "latest instruction"},
+		{Role: providertypes.RoleAssistant, Content: "latest answer"},
 	}, config.CompactConfig{
 		ManualStrategy:           config.CompactManualStrategyKeepRecent,
 		ManualKeepRecentMessages: 3,
@@ -31,10 +31,10 @@ func TestCompactionPlannerKeepRecentPlan(t *testing.T) {
 	if len(plan.Archived) != 2 || len(plan.Retained) != 4 {
 		t.Fatalf("unexpected keep_recent plan: %+v", plan)
 	}
-	if plan.Retained[0].Role != provider.RoleAssistant || len(plan.Retained[0].ToolCalls) != 1 {
+	if plan.Retained[0].Role != providertypes.RoleAssistant || len(plan.Retained[0].ToolCalls) != 1 {
 		t.Fatalf("expected retained tool block start, got %+v", plan.Retained[0])
 	}
-	if plan.Retained[1].Role != provider.RoleTool {
+	if plan.Retained[1].Role != providertypes.RoleTool {
 		t.Fatalf("expected retained tool result, got %+v", plan.Retained[1])
 	}
 }
@@ -43,11 +43,11 @@ func TestCompactionPlannerFullReplaceProtectsLatestExplicitUserInstruction(t *te
 	t.Parallel()
 
 	planner := compactionPlanner{}
-	plan, err := planner.Plan(ModeManual, []provider.Message{
-		{Role: provider.RoleUser, Content: "old request"},
-		{Role: provider.RoleAssistant, Content: "old answer"},
-		{Role: provider.RoleUser, Content: "latest instruction"},
-		{Role: provider.RoleAssistant, Content: "latest answer"},
+	plan, err := planner.Plan(ModeManual, []providertypes.Message{
+		{Role: providertypes.RoleUser, Content: "old request"},
+		{Role: providertypes.RoleAssistant, Content: "old answer"},
+		{Role: providertypes.RoleUser, Content: "latest instruction"},
+		{Role: providertypes.RoleAssistant, Content: "latest answer"},
 	}, config.CompactConfig{
 		ManualStrategy: config.CompactManualStrategyFullReplace,
 	})
@@ -60,7 +60,7 @@ func TestCompactionPlannerFullReplaceProtectsLatestExplicitUserInstruction(t *te
 	if len(plan.Archived) != 2 || len(plan.Retained) != 2 {
 		t.Fatalf("unexpected full_replace plan: %+v", plan)
 	}
-	if plan.Retained[0].Role != provider.RoleUser || plan.Retained[0].Content != "latest instruction" {
+	if plan.Retained[0].Role != providertypes.RoleUser || plan.Retained[0].Content != "latest instruction" {
 		t.Fatalf("expected latest explicit user instruction to stay retained, got %+v", plan.Retained)
 	}
 }
@@ -77,11 +77,11 @@ func TestCompactionPlannerRejectsUnsupportedStrategy(t *testing.T) {
 func TestCompactionPlannerReactiveModeAlwaysUsesKeepRecentStrategy(t *testing.T) {
 	t.Parallel()
 
-	plan, err := (compactionPlanner{}).Plan(ModeReactive, []provider.Message{
-		{Role: provider.RoleUser, Content: "old request"},
-		{Role: provider.RoleAssistant, Content: "old answer"},
-		{Role: provider.RoleUser, Content: "latest request"},
-		{Role: provider.RoleAssistant, Content: "latest answer"},
+	plan, err := (compactionPlanner{}).Plan(ModeReactive, []providertypes.Message{
+		{Role: providertypes.RoleUser, Content: "old request"},
+		{Role: providertypes.RoleAssistant, Content: "old answer"},
+		{Role: providertypes.RoleUser, Content: "latest request"},
+		{Role: providertypes.RoleAssistant, Content: "latest answer"},
 	}, config.CompactConfig{
 		ManualStrategy:           "unsupported",
 		ManualKeepRecentMessages: 2,

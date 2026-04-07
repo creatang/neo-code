@@ -7,7 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"neo-code/internal/provider"
+	providertypes "neo-code/internal/provider/types"
 )
 
 func TestExtractFencedCodeBlocks(t *testing.T) {
@@ -136,7 +136,7 @@ func TestTranscriptMouseClickCopiesCodeBlock(t *testing.T) {
 
 	app.width = 128
 	app.height = 40
-	app.activeMessages = []provider.Message{
+	app.activeMessages = []providertypes.Message{
 		{Role: roleAssistant, Content: "```go\nfmt.Println(1)\n```"},
 	}
 	app.applyComponentLayout(true)
@@ -223,7 +223,7 @@ func TestTranscriptMouseCopyFailureSetsError(t *testing.T) {
 
 	app.width = 128
 	app.height = 40
-	app.activeMessages = []provider.Message{
+	app.activeMessages = []providertypes.Message{
 		{Role: roleAssistant, Content: "```txt\nhello\n```"},
 	}
 	app.applyComponentLayout(true)
@@ -266,6 +266,6 @@ func TestTranscriptMouseCopyFailureSetsError(t *testing.T) {
 	}
 }
 
-func providerMessage(role, content string) provider.Message {
-	return provider.Message{Role: role, Content: content}
+func providerMessage(role, content string) providertypes.Message {
+	return providertypes.Message{Role: role, Content: content}
 }

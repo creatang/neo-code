@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"neo-code/internal/config"
-	"neo-code/internal/provider"
+	providertypes "neo-code/internal/provider/types"
 )
 
 // Mode identifies the compact execution mode.
@@ -34,15 +34,15 @@ type Input struct {
 	Mode      Mode
 	SessionID string
 	Workdir   string
-	Messages  []provider.Message
+	Messages  []providertypes.Message
 	Config    config.CompactConfig
 }
 
 // SummaryInput describes the historical context that must be summarized.
 type SummaryInput struct {
 	Mode                 Mode
-	ArchivedMessages     []provider.Message
-	RetainedMessages     []provider.Message
+	ArchivedMessages     []providertypes.Message
+	RetainedMessages     []providertypes.Message
 	ArchivedMessageCount int
 	Config               config.CompactConfig
 }
@@ -57,12 +57,12 @@ type Metrics struct {
 
 // Result is the compact execution result.
 type Result struct {
-	Messages       []provider.Message `json:"messages"`
-	Metrics        Metrics            `json:"metrics"`
-	TranscriptID   string             `json:"transcript_id"`
-	TranscriptPath string             `json:"transcript_path"`
-	Applied        bool               `json:"applied"`
-	ErrorMode      ErrorMode          `json:"error_mode"`
+	Messages       []providertypes.Message `json:"messages"`
+	Metrics        Metrics                 `json:"metrics"`
+	TranscriptID   string                  `json:"transcript_id"`
+	TranscriptPath string                  `json:"transcript_path"`
+	Applied        bool                    `json:"applied"`
+	ErrorMode      ErrorMode               `json:"error_mode"`
 }
 
 // SummaryGenerator produces the semantic compact summary.
@@ -155,8 +155,8 @@ func (s *Service) Run(ctx context.Context, input Input) (Result, error) {
 		return Result{}, err
 	}
 
-	next := make([]provider.Message, 0, len(plan.Retained)+1)
-	next = append(next, provider.Message{Role: provider.RoleAssistant, Content: summary})
+	next := make([]providertypes.Message, 0, len(plan.Retained)+1)
+	next = append(next, providertypes.Message{Role: providertypes.RoleAssistant, Content: summary})
 	next = append(next, plan.Retained...)
 
 	afterChars := countMessageChars(next)

@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"neo-code/internal/context/internalcompact"
-	"neo-code/internal/provider"
+	providertypes "neo-code/internal/provider/types"
 )
 
 func TestBuildCompactPromptIncludesFixedInstructionsAndBoundaries(t *testing.T) {
@@ -17,20 +17,20 @@ func TestBuildCompactPromptIncludesFixedInstructionsAndBoundaries(t *testing.T) 
 		ManualKeepRecentMessages: 10,
 		ArchivedMessageCount:     3,
 		MaxSummaryChars:          1200,
-		ArchivedMessages: []provider.Message{
+		ArchivedMessages: []providertypes.Message{
 			{
-				Role:    provider.RoleUser,
+				Role:    providertypes.RoleUser,
 				Content: "legacy request\nwith details",
 			},
 			{
-				Role: provider.RoleAssistant,
-				ToolCalls: []provider.ToolCall{
+				Role: providertypes.RoleAssistant,
+				ToolCalls: []providertypes.ToolCall{
 					{ID: "call-1", Name: "filesystem_read_file", Arguments: "{\n  \"path\": \"a.txt\"\n}"},
 				},
 			},
 		},
-		RetainedMessages: []provider.Message{
-			{Role: provider.RoleAssistant, Content: "recent answer"},
+		RetainedMessages: []providertypes.Message{
+			{Role: providertypes.RoleAssistant, Content: "recent answer"},
 		},
 	})
 

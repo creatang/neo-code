@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"neo-code/internal/provider"
+	providertypes "neo-code/internal/provider/types"
 )
 
 func TestTranscriptStoreSaveSanitizesSessionIDAndWritesJSONL(t *testing.T) {
@@ -25,8 +25,8 @@ func TestTranscriptStoreSaveSanitizesSessionIDAndWritesJSONL(t *testing.T) {
 		remove:      os.Remove,
 	}
 
-	id, path, err := store.Save([]provider.Message{
-		{Role: provider.RoleUser, Content: "hello"},
+	id, path, err := store.Save([]providertypes.Message{
+		{Role: providertypes.RoleUser, Content: "hello"},
 	}, "session with spaces", filepath.Join(home, "workspace"))
 	if err != nil {
 		t.Fatalf("Save() error = %v", err)
@@ -113,7 +113,7 @@ func TestTranscriptStoreSaveRemovesTemporaryFileWhenRenameFails(t *testing.T) {
 		},
 	}
 
-	_, _, err := store.Save([]provider.Message{{Role: provider.RoleUser, Content: "hello"}}, "session", filepath.Join(home, "workspace"))
+	_, _, err := store.Save([]providertypes.Message{{Role: providertypes.RoleUser, Content: "hello"}}, "session", filepath.Join(home, "workspace"))
 	if err == nil || !strings.Contains(err.Error(), "rename boom") {
 		t.Fatalf("expected rename error, got %v", err)
 	}

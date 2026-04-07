@@ -21,7 +21,9 @@ import (
 	contextcompact "neo-code/internal/context/compact"
 	"neo-code/internal/provider"
 	providercatalog "neo-code/internal/provider/catalog"
+	providertypes "neo-code/internal/provider/types"
 	agentruntime "neo-code/internal/runtime"
+	agentsession "neo-code/internal/session"
 	"neo-code/internal/tools"
 )
 
@@ -29,16 +31,18 @@ type stubRuntime struct {
 	runInputs     []agentruntime.UserInput
 	compactInputs []agentruntime.CompactInput
 	events        chan agentruntime.RuntimeEvent
-	sessions      []agentruntime.SessionSummary
-	loads         map[string]agentruntime.Session
+	sessions      []agentsession.Summary
+	loads         map[string]agentsession.Session
 	runErr        error
 	compactErr    error
 	compactResult agentruntime.CompactResult
 	listErr       error
 	loadErr       error
 	setWorkdirErr error
-	setResult     *agentruntime.Session
+	setResult     *agentsession.Session
 	setCalls      int
+	resolveInputs []agentruntime.PermissionResolutionInput
+	resolveErr    error
 	cancelCalls   int
 	cancelResult  bool
 }
@@ -65,7 +69,7 @@ func (r *stubMarkdownRenderer) Render(content string, width int) (string, error)
 func newStubRuntime() *stubRuntime {
 	return &stubRuntime{
 		events: make(chan agentruntime.RuntimeEvent, 16),
-		loads:  map[string]agentruntime.Session{},
+		loads:  map[string]agentsession.Session{},
 	}
 }
 
@@ -79,6 +83,11 @@ func (r *stubRuntime) Compact(ctx context.Context, input agentruntime.CompactInp
 	return r.compactResult, r.compactErr
 }
 
+func (r *stubRuntime) ResolvePermission(ctx context.Context, input agentruntime.PermissionResolutionInput) error {
+	r.resolveInputs = append(r.resolveInputs, input)
+	return r.resolveErr
+}
+
 func (r *stubRuntime) Events() <-chan agentruntime.RuntimeEvent {
 	return r.events
 }
@@ -88,34 +97,34 @@ func (r *stubRuntime) CancelActiveRun() bool {
 	return r.cancelResult
 }
 
-func (r *stubRuntime) ListSessions(ctx context.Context) ([]agentruntime.SessionSummary, error) {
+func (r *stubRuntime) ListSessions(ctx context.Context) ([]agentsession.Summary, error) {
 	if r.listErr != nil {
 		return nil, r.listErr
 	}
-	return append([]agentruntime.SessionSummary(nil), r.sessions...), nil
+	return append([]agentsession.Summary(nil), r.sessions...), nil
 }
 
-func (r *stubRuntime) LoadSession(ctx context.Context, id string) (agentruntime.Session, error) {
+func (r *stubRuntime) LoadSession(ctx context.Context, id string) (agentsession.Session, error) {
 	if r.loadErr != nil {
-		return agentruntime.Session{}, r.loadErr
+		return agentsession.Session{}, r.loadErr
 	}
 	if session, ok := r.loads[id]; ok {
 		return session, nil
 	}
-	return agentruntime.Session{}, nil
+	return agentsession.Session{}, nil
 }
 
-func (r *stubRuntime) SetSessionWorkdir(ctx context.Context, sessionID string, workdir string) (agentruntime.Session, error) {
+func (r *stubRuntime) SetSessionWorkdir(ctx context.Context, sessionID string, workdir string) (agentsession.Session, error) {
 	r.setCalls++
 	if r.setWorkdirErr != nil {
-		return agentruntime.Session{}, r.setWorkdirErr
+		return agentsession.Session{}, r.setWorkdirErr
 	}
 	if r.setResult != nil {
 		return *r.setResult, nil
 	}
 	session, ok := r.loads[sessionID]
 	if !ok {
-		session = agentruntime.Session{ID: sessionID}
+		session = agentsession.Session{ID: sessionID}
 	}
 	session.Workdir = strings.TrimSpace(workdir)
 	r.loads[sessionID] = session
@@ -244,7 +253,7 @@ func TestAppUpdateWorkspaceSlashCommands(t *testing.T) {
 		manager := newTestConfigManager(t)
 		runtime := newStubRuntime()
 		sessionID := "session-workdir"
-		runtime.loads[sessionID] = agentruntime.Session{ID: sessionID, Workdir: t.TempDir()}
+		runtime.loads[sessionID] = agentsession.Session{ID: sessionID, Workdir: t.TempDir()}
 
 		app, err := New(nil, manager, runtime, newTestProviderService(t, manager))
 		if err != nil {
@@ -321,7 +330,7 @@ func TestRunSessionWorkdirCommandBranches(t *testing.T) {
 	t.Run("session workdir fallback uses current workdir when runtime returns empty", func(t *testing.T) {
 		current := t.TempDir()
 		runtime := newStubRuntime()
-		runtime.setResult = &agentruntime.Session{ID: "session-1", Workdir: ""}
+		runtime.setResult = &agentsession.Session{ID: "session-1", Workdir: ""}
 		msg := runSessionWorkdirCommand(runtime, "session-1", current, "/cwd ./subdir")()
 		result := msg.(sessionWorkdirResultMsg)
 		if result.err != nil {
@@ -336,7 +345,7 @@ func TestRunSessionWorkdirCommandBranches(t *testing.T) {
 		current := t.TempDir()
 		target := t.TempDir()
 		runtime := newStubRuntime()
-		runtime.setResult = &agentruntime.Session{ID: "session-1", Workdir: target}
+		runtime.setResult = &agentsession.Session{ID: "session-1", Workdir: target}
 		msg := runSessionWorkdirCommand(runtime, "session-1", current, "/cwd ./subdir")()
 		result := msg.(sessionWorkdirResultMsg)
 		if result.err != nil {
@@ -490,6 +499,131 @@ func TestRunAgentWorkdirForwarding(t *testing.T) {
 	})
 }
 
+func TestHandlePermissionDecisionKey(t *testing.T) {
+	t.Parallel()
+
+	manager := newTestConfigManager(t)
+	runtime := newStubRuntime()
+	app, err := New(nil, manager, runtime, newTestProviderService(t, manager))
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	app.pendingPermission = &pendingPermissionPrompt{
+		RequestID: "perm-1",
+		ToolName:  "webfetch",
+	}
+
+	tests := []struct {
+		name     string
+		key      tea.KeyMsg
+		wantSent agentruntime.PermissionResolutionDecision
+		handled  bool
+	}{
+		{
+			name:     "y maps to allow once",
+			key:      tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}},
+			wantSent: agentruntime.PermissionResolutionAllowOnce,
+			handled:  true,
+		},
+		{
+			name:     "a maps to allow session",
+			key:      tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}},
+			wantSent: agentruntime.PermissionResolutionAllowSession,
+			handled:  true,
+		},
+		{
+			name:     "n maps to reject",
+			key:      tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}},
+			wantSent: agentruntime.PermissionResolutionReject,
+			handled:  true,
+		},
+		{
+			name:    "other key ignored",
+			key:     tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}},
+			handled: false,
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			app.pendingPermission.Submitted = false
+			runtime.resolveInputs = nil
+
+			cmd, handled := app.handlePermissionDecisionKey(tt.key)
+			if handled != tt.handled {
+				t.Fatalf("expected handled=%v, got %v", tt.handled, handled)
+			}
+			if !tt.handled {
+				if cmd != nil {
+					t.Fatalf("expected nil cmd for unhandled key")
+				}
+				return
+			}
+			if cmd == nil {
+				t.Fatalf("expected resolve cmd")
+			}
+			msg := cmd()
+			result, ok := msg.(permissionResolveResultMsg)
+			if !ok {
+				t.Fatalf("expected permissionResolveResultMsg, got %T", msg)
+			}
+			if result.err != nil {
+				t.Fatalf("expected nil resolve error, got %v", result.err)
+			}
+			if len(runtime.resolveInputs) == 0 {
+				t.Fatalf("expected runtime resolve inputs")
+			}
+			last := runtime.resolveInputs[len(runtime.resolveInputs)-1]
+			if last.Decision != tt.wantSent {
+				t.Fatalf("expected decision %q, got %q", tt.wantSent, last.Decision)
+			}
+			if strings.TrimSpace(last.RequestID) != "perm-1" {
+				t.Fatalf("expected request id perm-1, got %q", last.RequestID)
+			}
+		})
+	}
+}
+
+func TestHandlePermissionDecisionKeyIgnoresRepeatedSubmission(t *testing.T) {
+	t.Parallel()
+
+	manager := newTestConfigManager(t)
+	runtime := newStubRuntime()
+	app, err := New(nil, manager, runtime, newTestProviderService(t, manager))
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	app.pendingPermission = &pendingPermissionPrompt{
+		RequestID: "perm-repeat",
+		ToolName:  "webfetch",
+	}
+
+	cmd, handled := app.handlePermissionDecisionKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	if !handled || cmd == nil {
+		t.Fatalf("expected first permission key to be handled with cmd")
+	}
+	msg := cmd()
+	result, ok := msg.(permissionResolveResultMsg)
+	if !ok || result.err != nil {
+		t.Fatalf("expected successful permissionResolveResultMsg, got %#v", msg)
+	}
+	if len(runtime.resolveInputs) != 1 {
+		t.Fatalf("expected one resolve call after first submission, got %d", len(runtime.resolveInputs))
+	}
+
+	cmd, handled = app.handlePermissionDecisionKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	if !handled {
+		t.Fatalf("expected repeated permission key to be consumed")
+	}
+	if cmd != nil {
+		t.Fatalf("expected repeated submission to skip runtime command")
+	}
+	if len(runtime.resolveInputs) != 1 {
+		t.Fatalf("expected resolve call count unchanged after repeat, got %d", len(runtime.resolveInputs))
+	}
+}
+
 func TestAppUpdateModelPickerAndRuntimeMessages(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -544,7 +678,7 @@ func TestAppUpdateModelPickerAndRuntimeMessages(t *testing.T) {
 			msg: RuntimeMsg{Event: agentruntime.RuntimeEvent{
 				Type:      agentruntime.EventAgentDone,
 				SessionID: "session-2",
-				Payload: provider.Message{
+				Payload: providertypes.Message{
 					Role:    roleAssistant,
 					Content: "final",
 				},
@@ -644,15 +778,15 @@ func TestAppUpdateModelPickerAndRuntimeMessages(t *testing.T) {
 func TestAppHelpersAndRenderingSmoke(t *testing.T) {
 	manager := newTestConfigManager(t)
 	runtime := newStubRuntime()
-	now := agentruntime.Session{
+	now := agentsession.Session{
 		ID:    "session-1",
 		Title: "Existing Session",
-		Messages: []provider.Message{
+		Messages: []providertypes.Message{
 			{Role: roleUser, Content: "hi"},
 			{Role: roleAssistant, Content: "hello"},
 		},
 	}
-	runtime.sessions = []agentruntime.SessionSummary{
+	runtime.sessions = []agentsession.Summary{
 		{ID: now.ID, Title: now.Title, UpdatedAt: now.UpdatedAt},
 	}
 	runtime.loads[now.ID] = now
@@ -801,12 +935,12 @@ func TestAppHelpersAndRenderingSmoke(t *testing.T) {
 	if app.statusBadge("error: boom") == "" || app.statusBadge("running now") == "" {
 		t.Fatalf("expected status badge variants")
 	}
-	if rendered, _ := app.renderMessageBlockWithCopy(provider.Message{Role: roleError, Content: "boom"}, 80, 1); rendered == "" {
+	if rendered, _ := app.renderMessageBlockWithCopy(providertypes.Message{Role: roleError, Content: "boom"}, 80, 1); rendered == "" {
 		t.Fatalf("expected error message block")
 	}
-	if rendered, _ := app.renderMessageBlockWithCopy(provider.Message{
+	if rendered, _ := app.renderMessageBlockWithCopy(providertypes.Message{
 		Role: roleAssistant,
-		ToolCalls: []provider.ToolCall{
+		ToolCalls: []providertypes.ToolCall{
 			{Name: "filesystem_edit"},
 		},
 	}, 80, 1); rendered == "" {
@@ -854,7 +988,7 @@ func TestTUIStandaloneHelpers(t *testing.T) {
 		t.Fatalf("expected numeric helpers to work")
 	}
 
-	sItem := sessionItem{Summary: agentruntime.SessionSummary{Title: "My Session"}}
+	sItem := sessionItem{Summary: agentsession.Summary{Title: "My Session"}}
 	if sItem.FilterValue() != "my session" {
 		t.Fatalf("unexpected session item filter value")
 	}
@@ -1063,7 +1197,7 @@ func TestAppUpdateAdditionalTransitions(t *testing.T) {
 			setup: func(t *testing.T, app *App, runtime *stubRuntime, manager *config.Manager) {
 				app.state.ActiveSessionID = "existing"
 				app.state.ActiveSessionTitle = "Existing"
-				app.activeMessages = []provider.Message{{Role: roleUser, Content: "hello"}}
+				app.activeMessages = []providertypes.Message{{Role: roleUser, Content: "hello"}}
 			},
 			msg: tea.KeyMsg{Type: tea.KeyCtrlN},
 			assert: func(t *testing.T, app App, runtime *stubRuntime, manager *config.Manager, msgs []tea.Msg) {
@@ -1076,11 +1210,11 @@ func TestAppUpdateAdditionalTransitions(t *testing.T) {
 		{
 			name: "session enter activates selected session",
 			setup: func(t *testing.T, app *App, runtime *stubRuntime, manager *config.Manager) {
-				runtime.sessions = []agentruntime.SessionSummary{{ID: "s1", Title: "One"}}
-				runtime.loads["s1"] = agentruntime.Session{
+				runtime.sessions = []agentsession.Summary{{ID: "s1", Title: "One"}}
+				runtime.loads["s1"] = agentsession.Session{
 					ID:       "s1",
 					Title:    "One",
-					Messages: []provider.Message{{Role: roleAssistant, Content: "loaded"}},
+					Messages: []providertypes.Message{{Role: roleAssistant, Content: "loaded"}},
 				}
 				if err := app.refreshSessions(); err != nil {
 					t.Fatalf("refresh sessions: %v", err)
@@ -1655,7 +1789,7 @@ func TestAppHandleRuntimeEventAdditionalBranches(t *testing.T) {
 			event: agentruntime.RuntimeEvent{
 				Type:      agentruntime.EventToolStart,
 				SessionID: "s1",
-				Payload: provider.ToolCall{
+				Payload: providertypes.ToolCall{
 					Name: "filesystem_edit",
 				},
 			},
@@ -2315,7 +2449,7 @@ func TestRenderMessageBlockUserContentAlignsWithUserTag(t *testing.T) {
 		t.Fatalf("New() error = %v", err)
 	}
 
-	renderedMessage, _ := app.renderMessageBlockWithCopy(provider.Message{Role: roleUser, Content: "nihao"}, 80, 1)
+	renderedMessage, _ := app.renderMessageBlockWithCopy(providertypes.Message{Role: roleUser, Content: "nihao"}, 80, 1)
 	rendered := stripANSI(renderedMessage)
 	lines := strings.Split(rendered, "\n")
 
@@ -2611,8 +2745,8 @@ func newTestProviderService(t *testing.T, manager *config.Manager) *config.Selec
 
 type tUItestProvider struct{}
 
-func (tUItestProvider) Chat(ctx context.Context, req provider.ChatRequest, events chan<- provider.StreamEvent) (provider.ChatResponse, error) {
-	return provider.ChatResponse{}, nil
+func (tUItestProvider) Chat(ctx context.Context, req providertypes.ChatRequest, events chan<- providertypes.StreamEvent) error {
+	return nil
 }
 
 type tUItestCatalogStore struct {

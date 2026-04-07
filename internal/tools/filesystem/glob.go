@@ -51,6 +51,11 @@ func (t *GlobTool) Schema() map[string]any {
 	}
 }
 
+// MicroCompactPolicy 声明 glob 工具的历史结果默认参与 micro compact 清理。
+func (t *GlobTool) MicroCompactPolicy() tools.MicroCompactPolicy {
+	return tools.MicroCompactPolicyCompact
+}
+
 func (t *GlobTool) Execute(ctx context.Context, input tools.ToolCallInput) (tools.ToolResult, error) {
 	var args globInput
 	if err := json.Unmarshal(input.Arguments, &args); err != nil {

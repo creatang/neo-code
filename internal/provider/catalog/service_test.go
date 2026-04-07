@@ -8,6 +8,7 @@ import (
 
 	"neo-code/internal/config"
 	"neo-code/internal/provider"
+	providertypes "neo-code/internal/provider/types"
 )
 
 func TestNewService(t *testing.T) {
@@ -136,7 +137,7 @@ func TestListProviderModelsReturnsStaleCacheAndRefreshesInBackground(t *testing.
 	store := newMemoryStore()
 	now := time.Date(2026, 4, 2, 12, 0, 0, 0, time.UTC)
 	if err := store.Save(context.Background(), ModelCatalog{
-		SchemaVersion: SchemaVersion,
+		SchemaVersion: schemaVersion,
 		Identity:      identity,
 		FetchedAt:     now.Add(-48 * time.Hour),
 		ExpiresAt:     now.Add(-24 * time.Hour),
@@ -234,8 +235,8 @@ func containsModelDescriptorID(models []config.ModelDescriptor, modelID string) 
 
 type catalogTestProvider struct{}
 
-func (catalogTestProvider) Chat(ctx context.Context, req provider.ChatRequest, events chan<- provider.StreamEvent) (provider.ChatResponse, error) {
-	return provider.ChatResponse{}, nil
+func (catalogTestProvider) Chat(ctx context.Context, req providertypes.ChatRequest, events chan<- providertypes.StreamEvent) error {
+	return nil
 }
 
 type memoryStore struct {

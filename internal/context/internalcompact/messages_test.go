@@ -3,24 +3,24 @@ package internalcompact
 import (
 	"testing"
 
-	"neo-code/internal/provider"
+	providertypes "neo-code/internal/provider/types"
 )
 
 func TestBuildMessageSpansPreservesToolBlocksAndProtectedTail(t *testing.T) {
 	t.Parallel()
 
-	messages := []provider.Message{
-		{Role: provider.RoleUser, Content: "old"},
+	messages := []providertypes.Message{
+		{Role: providertypes.RoleUser, Content: "old"},
 		{
-			Role: provider.RoleAssistant,
-			ToolCalls: []provider.ToolCall{
+			Role: providertypes.RoleAssistant,
+			ToolCalls: []providertypes.ToolCall{
 				{ID: "call-1", Name: "filesystem_read_file", Arguments: "{}"},
 			},
 		},
-		{Role: provider.RoleTool, ToolCallID: "call-1", Content: "result"},
-		{Role: provider.RoleAssistant, Content: "after tool"},
-		{Role: provider.RoleUser, Content: "latest explicit instruction"},
-		{Role: provider.RoleAssistant, Content: "latest answer"},
+		{Role: providertypes.RoleTool, ToolCallID: "call-1", Content: "result"},
+		{Role: providertypes.RoleAssistant, Content: "after tool"},
+		{Role: providertypes.RoleUser, Content: "latest explicit instruction"},
+		{Role: providertypes.RoleAssistant, Content: "latest answer"},
 	}
 
 	spans := BuildMessageSpans(messages)

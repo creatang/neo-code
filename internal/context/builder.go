@@ -1,15 +1,25 @@
 package context
 
-import "context"
+import (
+	"context"
+
+	providertypes "neo-code/internal/provider/types"
+)
 
 // DefaultBuilder preserves the current runtime context-building behavior.
 type DefaultBuilder struct {
-	promptSources []promptSectionSource
-	trimPolicy    messageTrimPolicy
+	promptSources        []promptSectionSource
+	trimPolicy           messageTrimPolicy
+	microCompactPolicies MicroCompactPolicySource
 }
 
 // NewBuilder returns the default context builder implementation.
 func NewBuilder() Builder {
+	return NewBuilderWithToolPolicies(nil)
+}
+
+// NewBuilderWithToolPolicies 返回带工具 micro compact 策略源的默认上下文构建器。
+func NewBuilderWithToolPolicies(policies MicroCompactPolicySource) Builder {
 	systemSource := &systemStateSource{gitRunner: runGitCommand}
 	return &DefaultBuilder{
 		promptSources: []promptSectionSource{
@@ -17,7 +27,8 @@ func NewBuilder() Builder {
 			&projectRulesSource{},
 			systemSource,
 		},
-		trimPolicy: spanMessageTrimPolicy{},
+		trimPolicy:           spanMessageTrimPolicy{},
+		microCompactPolicies: policies,
 	}
 }
 
@@ -43,6 +54,14 @@ func (b *DefaultBuilder) Build(ctx context.Context, input BuildInput) (BuildResu
 
 	return BuildResult{
 		SystemPrompt: composeSystemPrompt(sections...),
-		Messages:     trimPolicy.Trim(input.Messages),
+		Messages:     applyReadTimeContextProjection(trimPolicy.Trim(input.Messages), input.Compact, b.microCompactPolicies),
 	}, nil
+}
+
+// applyReadTimeContextProjection 负责在 provider 请求前按开关应用只读上下文投影，避免改写原始会话消息。
+func applyReadTimeContextProjection(messages []providertypes.Message, options CompactOptions, policies MicroCompactPolicySource) []providertypes.Message {
+	if options.DisableMicroCompact {
+		return cloneContextMessages(messages)
+	}
+	return microCompactMessagesWithPolicies(messages, policies)
 }

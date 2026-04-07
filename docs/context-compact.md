@@ -19,6 +19,7 @@ context:
     manual_strategy: keep_recent
     manual_keep_recent_messages: 10
     max_summary_chars: 1200
+    micro_compact_disabled: false
 ```
 
 - `manual_strategy`
@@ -27,6 +28,11 @@ context:
   在 `keep_recent` 模式下保留最近消息数量，并按 tool call 与 tool result 的原子块整体保留。
 - `max_summary_chars`
   控制 compact summary 的最大字符数。
+- `micro_compact_disabled`
+  控制是否关闭默认启用的读时 micro compact；设为 `true` 时会回退为仅 trim、不清理旧 tool result。
+
+新增工具时，micro compact 策略不再由 `context` 层静态白名单维护，而是由 `internal/tools` 中的工具实现声明。
+默认情况下，已注册工具都会参与 micro compact；只有显式声明保留历史结果的工具才会跳过旧结果清理。
 
 ## 执行链路
 

@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	"neo-code/internal/context/internalcompact"
-	"neo-code/internal/provider"
+	providertypes "neo-code/internal/provider/types"
 )
 
 var compactSummarySystemPrompt = buildCompactSummarySystemPrompt()
@@ -17,8 +17,8 @@ type CompactPromptInput struct {
 	ManualKeepRecentMessages int
 	ArchivedMessageCount     int
 	MaxSummaryChars          int
-	ArchivedMessages         []provider.Message
-	RetainedMessages         []provider.Message
+	ArchivedMessages         []providertypes.Message
+	RetainedMessages         []providertypes.Message
 }
 
 // CompactPrompt is the provider-facing prompt pair for compact summaries.
@@ -87,7 +87,7 @@ func buildCompactSummarySystemPrompt() string {
 }
 
 // renderCompactPromptMessages 将消息渲染为紧凑的 transcript 视图，减少冗余 JSON 噪音。
-func renderCompactPromptMessages(messages []provider.Message) string {
+func renderCompactPromptMessages(messages []providertypes.Message) string {
 	if len(messages) == 0 {
 		return "[]"
 	}
@@ -120,7 +120,7 @@ func renderCompactPromptMessages(messages []provider.Message) string {
 }
 
 // renderCompactPromptToolCall 以单行形式渲染工具调用元信息，压缩摘要输入体积。
-func renderCompactPromptToolCall(call provider.ToolCall) string {
+func renderCompactPromptToolCall(call providertypes.ToolCall) string {
 	line := fmt.Sprintf(
 		"tool_call id=%s name=%s arguments=%s",
 		strings.TrimSpace(call.ID),

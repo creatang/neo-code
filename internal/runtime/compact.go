@@ -8,7 +8,8 @@ import (
 
 	"neo-code/internal/config"
 	contextcompact "neo-code/internal/context/compact"
-	"neo-code/internal/provider"
+	providertypes "neo-code/internal/provider/types"
+	agentsession "neo-code/internal/session"
 )
 
 // CompactInput 描述一次手动 compact 请求所需的最小输入。
@@ -83,10 +84,10 @@ func (s *Service) Compact(ctx context.Context, input CompactInput) (CompactResul
 func (s *Service) runCompactForSession(
 	ctx context.Context,
 	runID string,
-	session Session,
+	session agentsession.Session,
 	cfg config.Config,
 	failOnError bool,
-) (Session, contextcompact.Result, error) {
+) (agentsession.Session, contextcompact.Result, error) {
 	runner := s.compactRunner
 	if runner == nil {
 		var err error
@@ -103,7 +104,7 @@ func (s *Service) runCompactForSession(
 		}
 	}
 
-	originalMessages := append([]provider.Message(nil), session.Messages...)
+	originalMessages := append([]providertypes.Message(nil), session.Messages...)
 	s.emit(ctx, EventCompactStart, runID, session.ID, string(contextcompact.ModeManual))
 
 	result, err := runner.Run(ctx, contextcompact.Input{
@@ -125,7 +126,7 @@ func (s *Service) runCompactForSession(
 	}
 
 	if result.Applied {
-		session.Messages = append([]provider.Message(nil), result.Messages...)
+		session.Messages = append([]providertypes.Message(nil), result.Messages...)
 		session.UpdatedAt = time.Now()
 		if err := s.sessionStore.Save(ctx, &session); err != nil {
 			s.emit(ctx, EventCompactError, runID, session.ID, CompactErrorPayload{
@@ -155,7 +156,7 @@ func (s *Service) runCompactForSession(
 }
 
 // defaultCompactRunner 为手动 compact 选择摘要生成器并构造默认 runner。
-func (s *Service) defaultCompactRunner(session Session, cfg config.Config) (contextcompact.Runner, error) {
+func (s *Service) defaultCompactRunner(session agentsession.Session, cfg config.Config) (contextcompact.Runner, error) {
 	resolvedProvider, model, err := resolveCompactProviderSelection(session, cfg)
 	if err != nil {
 		return nil, err
@@ -164,7 +165,7 @@ func (s *Service) defaultCompactRunner(session Session, cfg config.Config) (cont
 }
 
 // resolveCompactProviderSelection 优先复用会话记录的 provider/model，缺失时再回退当前配置。
-func resolveCompactProviderSelection(session Session, cfg config.Config) (config.ResolvedProviderConfig, string, error) {
+func resolveCompactProviderSelection(session agentsession.Session, cfg config.Config) (config.ResolvedProviderConfig, string, error) {
 	sessionProvider := strings.TrimSpace(session.Provider)
 	sessionModel := strings.TrimSpace(session.Model)
 	if sessionProvider != "" && sessionModel != "" {
