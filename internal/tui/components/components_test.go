@@ -137,3 +137,17 @@ func TestRenderSessionRow(t *testing.T) {
 		t.Fatalf("expected updated-at label in row, got %q", row)
 	}
 }
+
+func TestNormalizeBlockRightEdgeBlankContent(t *testing.T) {
+	blank := "   \n\t"
+	if got := NormalizeBlockRightEdge(blank, 20); got != blank {
+		t.Fatalf("expected blank content passthrough, got %q", got)
+	}
+}
+
+func TestCompactStatusTextWithLimit(t *testing.T) {
+	text := "\n   first   useful   line   \nsecond line"
+	if got := CompactStatusText(text, 9); got != "fir...ine" {
+		t.Fatalf("expected first non-empty line compacted with ellipsis, got %q", got)
+	}
+}
