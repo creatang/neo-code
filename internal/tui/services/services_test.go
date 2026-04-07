@@ -184,3 +184,30 @@ func TestFileServices(t *testing.T) {
 		t.Fatalf("expected empty resolved path for blank input, got %q", resolved)
 	}
 }
+
+func TestSuggestFileMatchesBranches(t *testing.T) {
+	candidates := []string{
+		"internal/tui/update.go",
+		"docs/internal-arch.md",
+		"README.md",
+	}
+
+	if got := SuggestFileMatches("arch", candidates, 2); len(got) != 1 || got[0] != "docs/internal-arch.md" {
+		t.Fatalf("expected contains-match branch, got %v", got)
+	}
+	if got := SuggestFileMatches("", candidates, 2); len(got) != 2 {
+		t.Fatalf("expected empty query to return prefix-priority items, got %v", got)
+	}
+	if got := SuggestFileMatches("any", candidates, 0); got != nil {
+		t.Fatalf("expected zero limit to return nil, got %v", got)
+	}
+	if got := SuggestFileMatches("any", nil, 2); got != nil {
+		t.Fatalf("expected nil candidates to return nil, got %v", got)
+	}
+}
+
+func TestResolveWorkspaceDirectoryInvalidPath(t *testing.T) {
+	if resolved := ResolveWorkspaceDirectory("\x00"); resolved != "" {
+		t.Fatalf("expected invalid path to resolve as empty string, got %q", resolved)
+	}
+}
