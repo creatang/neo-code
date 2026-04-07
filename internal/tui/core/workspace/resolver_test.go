@@ -29,6 +29,16 @@ func TestResolveWorkspacePath(t *testing.T) {
 	if resolved != filepath.Clean(base) {
 		t.Fatalf("expected base directory for empty requested path, got %q", resolved)
 	}
+
+	// Empty base falls back to os.Getwd().
+	resolved, err = ResolveWorkspacePath("", ".")
+	if err != nil {
+		t.Fatalf("ResolveWorkspacePath(empty base) error = %v", err)
+	}
+	cwd, _ := os.Getwd()
+	if resolved != filepath.Clean(cwd) {
+		t.Fatalf("expected current directory for empty base, got %q", resolved)
+	}
 }
 
 func TestResolveWorkspacePathErrors(t *testing.T) {
