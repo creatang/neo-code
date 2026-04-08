@@ -3,7 +3,7 @@ package internalcompact
 import (
 	"strings"
 
-	"neo-code/internal/provider"
+	providertypes "neo-code/internal/provider/types"
 )
 
 // MessageSpan 描述一段不可拆分的消息区间，并携带是否需要保护的尾部语义。
@@ -15,13 +15,13 @@ type MessageSpan struct {
 }
 
 // BuildMessageSpans 按工具调用原子块构建消息分段，并保护最后一条明确用户指令所在分段。
-func BuildMessageSpans(messages []provider.Message) []MessageSpan {
+func BuildMessageSpans(messages []providertypes.Message) []MessageSpan {
 	spans := make([]MessageSpan, 0, len(messages))
 	for i := 0; i < len(messages); {
 		start := i
 		end := i + 1
-		if messages[start].Role == provider.RoleAssistant && len(messages[start].ToolCalls) > 0 {
-			for end < len(messages) && messages[end].Role == provider.RoleTool {
+		if messages[start].Role == providertypes.RoleAssistant && len(messages[start].ToolCalls) > 0 {
+			for end < len(messages) && messages[end].Role == providertypes.RoleTool {
 				end++
 			}
 		}
@@ -73,9 +73,9 @@ func RetainedStartForKeepRecentMessages(spans []MessageSpan, keepMessages int) i
 }
 
 // lastExplicitUserMessageIndex 返回最后一条非空用户消息的位置，用于保护最近明确指令。
-func lastExplicitUserMessageIndex(messages []provider.Message) int {
+func lastExplicitUserMessageIndex(messages []providertypes.Message) int {
 	for index := len(messages) - 1; index >= 0; index-- {
-		if messages[index].Role == provider.RoleUser && strings.TrimSpace(messages[index].Content) != "" {
+		if messages[index].Role == providertypes.RoleUser && strings.TrimSpace(messages[index].Content) != "" {
 			return index
 		}
 	}

@@ -15,7 +15,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"neo-code/internal/config"
-	"neo-code/internal/provider"
+	providertypes "neo-code/internal/provider/types"
 	agentruntime "neo-code/internal/runtime"
 )
 
@@ -46,7 +46,7 @@ type App struct {
 	inputBurstStart  time.Time
 	inputBurstCount  int
 	pasteMode        bool
-	activeMessages   []provider.Message
+	activeMessages   []providertypes.Message
 	activities       []activityEntry
 	fileCandidates   []string
 	modelRefreshID   string

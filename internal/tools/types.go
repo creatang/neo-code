@@ -3,7 +3,7 @@ package tools
 import (
 	"context"
 
-	"neo-code/internal/provider"
+	providertypes "neo-code/internal/provider/types"
 	"neo-code/internal/security"
 )
 
@@ -11,6 +11,7 @@ type Tool interface {
 	Name() string
 	Description() string
 	Schema() map[string]any
+	MicroCompactPolicy() MicroCompactPolicy
 	Execute(ctx context.Context, call ToolCallInput) (ToolResult, error)
 }
 
@@ -34,4 +35,4 @@ type ToolResult struct {
 	Metadata   map[string]any
 }
 
-type ToolSpec = provider.ToolSpec
+type ToolSpec = providertypes.ToolSpec

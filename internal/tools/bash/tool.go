@@ -45,7 +45,7 @@ func NewWithExecutor(root string, shell string, timeout time.Duration, executor 
 }
 
 func (t *Tool) Name() string {
-	return "bash"
+	return tools.ToolNameBash
 }
 
 func (t *Tool) Description() string {
@@ -67,6 +67,11 @@ func (t *Tool) Schema() map[string]any {
 		},
 		"required": []string{"command"},
 	}
+}
+
+// MicroCompactPolicy 声明 bash 工具的历史结果默认参与 micro compact 清理。
+func (t *Tool) MicroCompactPolicy() tools.MicroCompactPolicy {
+	return tools.MicroCompactPolicyCompact
 }
 
 func (t *Tool) Execute(ctx context.Context, call tools.ToolCallInput) (tools.ToolResult, error) {

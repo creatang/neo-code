@@ -4,14 +4,16 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"neo-code/internal/tools"
 )
 
 const (
-	readFileToolName  = "filesystem_read_file"
-	writeFileToolName = "filesystem_write_file"
-	grepToolName      = "filesystem_grep"
-	globToolName      = "filesystem_glob"
-	editToolName      = "filesystem_edit"
+	readFileToolName  = tools.ToolNameFilesystemReadFile
+	writeFileToolName = tools.ToolNameFilesystemWriteFile
+	grepToolName      = tools.ToolNameFilesystemGrep
+	globToolName      = tools.ToolNameFilesystemGlob
+	editToolName      = tools.ToolNameFilesystemEdit
 )
 
 func effectiveRoot(defaultRoot string, workdir string) string {

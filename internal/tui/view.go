@@ -7,7 +7,7 @@ import (
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/lipgloss"
 
-	"neo-code/internal/provider"
+	providertypes "neo-code/internal/provider/types"
 )
 
 type layout struct {
@@ -229,7 +229,7 @@ func (a App) renderPanel(title string, subtitle string, body string, width int, 
 	return lipgloss.Place(width, height, lipgloss.Left, lipgloss.Top, panel)
 }
 
-func (a App) renderMessageBlockWithCopy(message provider.Message, width int, startCopyID int) (string, []copyCodeButtonBinding) {
+func (a App) renderMessageBlockWithCopy(message providertypes.Message, width int, startCopyID int) (string, []copyCodeButtonBinding) {
 	switch message.Role {
 	case roleEvent:
 		return a.styles.inlineNotice.Width(width).Render("  > " + wrapPlain(message.Content, max(16, width-6))), nil

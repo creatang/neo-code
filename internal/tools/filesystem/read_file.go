@@ -47,6 +47,11 @@ func (t *ReadFileTool) Schema() map[string]any {
 	}
 }
 
+// MicroCompactPolicy 声明读文件工具的历史结果默认参与 micro compact 清理。
+func (t *ReadFileTool) MicroCompactPolicy() tools.MicroCompactPolicy {
+	return tools.MicroCompactPolicyCompact
+}
+
 func (t *ReadFileTool) Execute(ctx context.Context, input tools.ToolCallInput) (tools.ToolResult, error) {
 	var args readFileInput
 	if err := json.Unmarshal(input.Arguments, &args); err != nil {

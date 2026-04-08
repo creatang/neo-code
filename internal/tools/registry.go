@@ -6,16 +6,19 @@ import (
 	"sort"
 	"strings"
 
-	"neo-code/internal/provider"
+	providertypes "neo-code/internal/provider/types"
+	"neo-code/internal/security"
 )
 
 type Registry struct {
-	tools map[string]Tool
+	tools                map[string]Tool
+	microCompactPolicies map[string]MicroCompactPolicy
 }
 
 func NewRegistry() *Registry {
 	return &Registry{
-		tools: map[string]Tool{},
+		tools:                map[string]Tool{},
+		microCompactPolicies: map[string]MicroCompactPolicy{},
 	}
 }
 
@@ -23,7 +26,14 @@ func (r *Registry) Register(tool Tool) {
 	if tool == nil {
 		return
 	}
-	r.tools[strings.ToLower(tool.Name())] = tool
+	name := strings.ToLower(tool.Name())
+	r.tools[name] = tool
+	switch tool.MicroCompactPolicy() {
+	case MicroCompactPolicyPreserveHistory:
+		r.microCompactPolicies[name] = MicroCompactPolicyPreserveHistory
+	default:
+		r.microCompactPolicies[name] = MicroCompactPolicyCompact
+	}
 }
 
 func (r *Registry) Get(name string) (Tool, error) {
@@ -40,17 +50,32 @@ func (r *Registry) Supports(name string) bool {
 	return err == nil
 }
 
-func (r *Registry) GetSpecs() []provider.ToolSpec {
+// MicroCompactPolicy 返回指定工具名的 micro compact 策略；未知工具按默认可压缩处理。
+func (r *Registry) MicroCompactPolicy(name string) MicroCompactPolicy {
+	if r == nil {
+		return MicroCompactPolicyCompact
+	}
+	policy, ok := r.microCompactPolicies[strings.ToLower(strings.TrimSpace(name))]
+	if !ok {
+		return MicroCompactPolicyCompact
+	}
+	if policy == MicroCompactPolicyPreserveHistory {
+		return MicroCompactPolicyPreserveHistory
+	}
+	return MicroCompactPolicyCompact
+}
+
+func (r *Registry) GetSpecs() []providertypes.ToolSpec {
 	names := make([]string, 0, len(r.tools))
 	for name := range r.tools {
 		names = append(names, name)
 	}
 	sort.Strings(names)
 
-	specs := make([]provider.ToolSpec, 0, len(names))
+	specs := make([]providertypes.ToolSpec, 0, len(names))
 	for _, name := range names {
 		tool := r.tools[name]
-		specs = append(specs, provider.ToolSpec{
+		specs = append(specs, providertypes.ToolSpec{
 			Name:        tool.Name(),
 			Description: tool.Description(),
 			Schema:      tool.Schema(),
@@ -59,12 +84,12 @@ func (r *Registry) GetSpecs() []provider.ToolSpec {
 	return specs
 }
 
-func (r *Registry) ListSchemas() []provider.ToolSpec {
+func (r *Registry) ListSchemas() []providertypes.ToolSpec {
 	return r.GetSpecs()
 }
 
 // ListAvailableSpecs returns all registered tool specs.
-func (r *Registry) ListAvailableSpecs(ctx context.Context, input SpecListInput) ([]provider.ToolSpec, error) {
+func (r *Registry) ListAvailableSpecs(ctx context.Context, input SpecListInput) ([]providertypes.ToolSpec, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -93,4 +118,9 @@ func (r *Registry) Execute(ctx context.Context, input ToolCallInput) (ToolResult
 		return result, execErr
 	}
 	return result, nil
+}
+
+// RememberSessionDecision 对纯 Registry 管理器不生效，保留接口以满足 runtime 依赖。
+func (r *Registry) RememberSessionDecision(sessionID string, action security.Action, scope SessionPermissionScope) error {
+	return errors.New("tools: session permission memory is unsupported by registry manager")
 }

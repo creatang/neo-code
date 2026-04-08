@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"neo-code/internal/provider"
+	providertypes "neo-code/internal/provider/types"
 )
 
 const sessionsDirName = "sessions"
@@ -23,11 +23,11 @@ type Session struct {
 	// Provider 记录最近一次成功运行会话时使用的 provider，用于 compact 优先复用历史配置。
 	Provider string `json:"provider,omitempty"`
 	// Model 记录最近一次成功运行会话时使用的 model，用于 compact 优先复用历史配置。
-	Model     string             `json:"model,omitempty"`
-	CreatedAt time.Time          `json:"created_at"`
-	UpdatedAt time.Time          `json:"updated_at"`
-	Workdir   string             `json:"-"`
-	Messages  []provider.Message `json:"messages"`
+	Model     string                  `json:"model,omitempty"`
+	CreatedAt time.Time               `json:"created_at"`
+	UpdatedAt time.Time               `json:"updated_at"`
+	Workdir   string                  `json:"-"`
+	Messages  []providertypes.Message `json:"messages"`
 }
 
 type SessionSummary struct {
@@ -181,7 +181,7 @@ func newSessionWithWorkdir(title string, workdir string) Session {
 		CreatedAt: now,
 		UpdatedAt: now,
 		Workdir:   strings.TrimSpace(workdir),
-		Messages:  []provider.Message{},
+		Messages:  []providertypes.Message{},
 	}
 }
 

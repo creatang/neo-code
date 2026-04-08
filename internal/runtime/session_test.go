@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"neo-code/internal/provider"
+	providertypes "neo-code/internal/provider/types"
 )
 
 func TestJSONSessionStoreSaveLoadAndListSummaries(t *testing.T) {
@@ -22,7 +22,7 @@ func TestJSONSessionStoreSaveLoadAndListSummaries(t *testing.T) {
 		Title:     "Old Session",
 		CreatedAt: time.Now().Add(-2 * time.Hour),
 		UpdatedAt: time.Now().Add(-1 * time.Hour),
-		Messages: []provider.Message{
+		Messages: []providertypes.Message{
 			{Role: "user", Content: "hello"},
 			{Role: "assistant", Content: "world"},
 		},
@@ -33,7 +33,7 @@ func TestJSONSessionStoreSaveLoadAndListSummaries(t *testing.T) {
 		CreatedAt: time.Now().Add(-30 * time.Minute),
 		UpdatedAt: time.Now(),
 		Workdir:   t.TempDir(),
-		Messages: []provider.Message{
+		Messages: []providertypes.Message{
 			{Role: "user", Content: "new"},
 		},
 	}
@@ -119,7 +119,7 @@ func TestJSONSessionStoreCorruptedSessionBehaviors(t *testing.T) {
 		Title:     "Valid Session",
 		CreatedAt: time.Now().Add(-time.Minute),
 		UpdatedAt: time.Now(),
-		Messages:  []provider.Message{{Role: "user", Content: "hello"}},
+		Messages:  []providertypes.Message{{Role: "user", Content: "hello"}},
 	}
 	if err := store.Save(context.Background(), valid); err != nil {
 		t.Fatalf("Save valid session: %v", err)

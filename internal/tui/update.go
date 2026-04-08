@@ -16,7 +16,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"neo-code/internal/config"
-	"neo-code/internal/provider"
+	providertypes "neo-code/internal/provider/types"
 	agentruntime "neo-code/internal/runtime"
 	"neo-code/internal/tools"
 )
@@ -398,7 +398,7 @@ func (a App) updateInputPanel(msg tea.Msg, typed tea.KeyMsg, cmds []tea.Cmd) (te
 			a.state.ExecutionError = ""
 			a.state.StatusText = statusThinking
 			a.state.CurrentTool = ""
-			a.activeMessages = append(a.activeMessages, provider.Message{Role: roleUser, Content: input})
+			a.activeMessages = append(a.activeMessages, providertypes.Message{Role: roleUser, Content: input})
 			a.rebuildTranscript()
 			requestedWorkdir := ""
 			if strings.TrimSpace(a.state.ActiveSessionID) == "" {
@@ -611,7 +611,10 @@ func (a *App) refreshMessages() error {
 		return err
 	}
 
-	a.activeMessages = session.Messages
+	a.activeMessages = make([]providertypes.Message, len(session.Messages))
+	for i, m := range session.Messages {
+		a.activeMessages[i] = providertypes.Message(m)
+	}
 	a.clearActivities()
 	a.state.ActiveSessionTitle = session.Title
 	a.state.CurrentWorkdir = selectSessionWorkdir(session.Workdir, a.configManager.Get().Workdir)
@@ -683,7 +686,7 @@ func (a *App) handleRuntimeEvent(event agentruntime.RuntimeEvent) bool {
 	case agentruntime.EventToolStart:
 		a.state.StatusText = statusRunningTool
 		a.state.StreamingReply = false
-		if payload, ok := event.Payload.(provider.ToolCall); ok {
+		if payload, ok := event.Payload.(providertypes.ToolCall); ok {
 			a.state.CurrentTool = payload.Name
 			a.setRunProgress(0.6, "Running tool")
 			a.appendActivity("tool", "Running tool", payload.Name, false)
@@ -693,7 +696,7 @@ func (a *App) handleRuntimeEvent(event agentruntime.RuntimeEvent) bool {
 		a.state.CurrentTool = ""
 		a.setRunProgress(0.8, "Integrating result")
 		if payload, ok := event.Payload.(tools.ToolResult); ok {
-			a.activeMessages = append(a.activeMessages, provider.Message{
+			a.activeMessages = append(a.activeMessages, providertypes.Message{
 				Role:    roleTool,
 				Content: payload.Content,
 				IsError: payload.IsError,
@@ -729,8 +732,8 @@ func (a *App) handleRuntimeEvent(event agentruntime.RuntimeEvent) bool {
 		if strings.TrimSpace(a.state.ExecutionError) == "" {
 			a.state.StatusText = statusReady
 		}
-		if payload, ok := event.Payload.(provider.Message); ok && strings.TrimSpace(payload.Content) != "" && !a.lastAssistantMatches(payload.Content) {
-			a.activeMessages = append(a.activeMessages, provider.Message{Role: roleAssistant, Content: payload.Content})
+		if payload, ok := event.Payload.(providertypes.Message); ok && strings.TrimSpace(payload.Content) != "" && !a.lastAssistantMatches(payload.Content) {
+			a.activeMessages = append(a.activeMessages, providertypes.Message{Role: roleAssistant, Content: payload.Content})
 			transcriptDirty = true
 		}
 	case agentruntime.EventRunCanceled:
@@ -799,7 +802,7 @@ func (a *App) appendAssistantChunk(chunk string) {
 	}
 
 	if !a.state.StreamingReply || len(a.activeMessages) == 0 || a.activeMessages[len(a.activeMessages)-1].Role != roleAssistant {
-		a.activeMessages = append(a.activeMessages, provider.Message{Role: roleAssistant, Content: chunk})
+		a.activeMessages = append(a.activeMessages, providertypes.Message{Role: roleAssistant, Content: chunk})
 		a.state.StreamingReply = true
 		return
 	}
@@ -813,7 +816,7 @@ func (a *App) appendInlineMessage(role string, message string) {
 		return
 	}
 
-	a.activeMessages = append(a.activeMessages, provider.Message{Role: role, Content: content})
+	a.activeMessages = append(a.activeMessages, providertypes.Message{Role: role, Content: content})
 }
 
 func (a *App) appendActivity(kind string, title string, detail string, isError bool) {

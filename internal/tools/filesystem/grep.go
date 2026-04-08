@@ -60,6 +60,11 @@ func (t *GrepTool) Schema() map[string]any {
 	}
 }
 
+// MicroCompactPolicy 声明 grep 工具的历史结果默认参与 micro compact 清理。
+func (t *GrepTool) MicroCompactPolicy() tools.MicroCompactPolicy {
+	return tools.MicroCompactPolicyCompact
+}
+
 func (t *GrepTool) Execute(ctx context.Context, input tools.ToolCallInput) (tools.ToolResult, error) {
 	var args grepInput
 	if err := json.Unmarshal(input.Arguments, &args); err != nil {

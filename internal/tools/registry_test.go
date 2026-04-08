@@ -5,12 +5,15 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"neo-code/internal/security"
 )
 
 type stubTool struct {
 	name        string
 	description string
 	schema      map[string]any
+	policy      MicroCompactPolicy
 	result      ToolResult
 	err         error
 }
@@ -19,6 +22,9 @@ func (s stubTool) Name() string        { return s.name }
 func (s stubTool) Description() string { return s.description }
 func (s stubTool) Schema() map[string]any {
 	return s.schema
+}
+func (s stubTool) MicroCompactPolicy() MicroCompactPolicy {
+	return s.policy
 }
 func (s stubTool) Execute(ctx context.Context, call ToolCallInput) (ToolResult, error) {
 	return s.result, s.err
@@ -159,6 +165,12 @@ func TestRegistryHelpers(t *testing.T) {
 	if registry.Supports("missing") {
 		t.Fatalf("did not expect registry to support missing tool")
 	}
+	if registry.MicroCompactPolicy("a_tool") != MicroCompactPolicyCompact {
+		t.Fatalf("expected compact policy default for a_tool")
+	}
+	if registry.MicroCompactPolicy("missing") != MicroCompactPolicyCompact {
+		t.Fatalf("expected compact policy default for unknown tool")
+	}
 
 	schemas := registry.ListSchemas()
 	if len(schemas) != 1 || schemas[0].Name != "a_tool" {
@@ -178,5 +190,55 @@ func TestRegistryHelpers(t *testing.T) {
 	_, err = registry.ListAvailableSpecs(canceled, SpecListInput{})
 	if err == nil || !strings.Contains(err.Error(), context.Canceled.Error()) {
 		t.Fatalf("expected context canceled, got %v", err)
+	}
+}
+
+func TestRegistryMicroCompactPolicyPreserveHistory(t *testing.T) {
+	t.Parallel()
+
+	registry := NewRegistry()
+	registry.Register(stubTool{
+		name:        "custom_tool",
+		description: "preserve history",
+		schema:      map[string]any{"type": "object"},
+		policy:      MicroCompactPolicyPreserveHistory,
+	})
+
+	if got := registry.MicroCompactPolicy("custom_tool"); got != MicroCompactPolicyPreserveHistory {
+		t.Fatalf("expected preserve history policy, got %q", got)
+	}
+}
+
+func TestRegistryMicroCompactPolicyNormalizesNameAndNilRegistry(t *testing.T) {
+	t.Parallel()
+
+	registry := NewRegistry()
+	registry.Register(stubTool{
+		name:        "Custom_Tool",
+		description: "preserve history",
+		schema:      map[string]any{"type": "object"},
+		policy:      MicroCompactPolicyPreserveHistory,
+	})
+
+	if got := registry.MicroCompactPolicy("  custom_tool  "); got != MicroCompactPolicyPreserveHistory {
+		t.Fatalf("expected normalized preserve history policy, got %q", got)
+	}
+
+	var nilRegistry *Registry
+	if got := nilRegistry.MicroCompactPolicy("whatever"); got != MicroCompactPolicyCompact {
+		t.Fatalf("expected nil registry default compact policy, got %q", got)
+	}
+}
+
+func TestRegistryRememberSessionDecisionUnsupported(t *testing.T) {
+	t.Parallel()
+
+	registry := NewRegistry()
+	err := registry.RememberSessionDecision("session-1", security.Action{}, SessionPermissionScopeAlways)
+	if err == nil {
+		t.Fatalf("expected unsupported error")
+	}
+	if !strings.Contains(err.Error(), "unsupported") {
+		t.Fatalf("expected unsupported error, got %v", err)
 	}
 }

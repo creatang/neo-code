@@ -6,13 +6,13 @@ import (
 
 	"neo-code/internal/config"
 	"neo-code/internal/context/internalcompact"
-	"neo-code/internal/provider"
+	providertypes "neo-code/internal/provider/types"
 )
 
 // compactionPlan 描述一次 compact 在摘要生成前的归档与保留结果。
 type compactionPlan struct {
-	Archived             []provider.Message
-	Retained             []provider.Message
+	Archived             []providertypes.Message
+	Retained             []providertypes.Message
 	ArchivedMessageCount int
 	Applied              bool
 }
@@ -21,7 +21,7 @@ type compactionPlan struct {
 type compactionPlanner struct{}
 
 // Plan 根据 mode 与配置返回摘要前的裁剪规划结果。
-func (compactionPlanner) Plan(mode Mode, messages []provider.Message, cfg config.CompactConfig) (compactionPlan, error) {
+func (compactionPlanner) Plan(mode Mode, messages []providertypes.Message, cfg config.CompactConfig) (compactionPlan, error) {
 	if mode == ModeReactive {
 		return planKeepRecent(messages, cfg.ManualKeepRecentMessages), nil
 	}
@@ -37,7 +37,7 @@ func (compactionPlanner) Plan(mode Mode, messages []provider.Message, cfg config
 }
 
 // planKeepRecent 计算 keep_recent 策略下需要摘要与保留的消息集合。
-func planKeepRecent(messages []provider.Message, keepMessages int) compactionPlan {
+func planKeepRecent(messages []providertypes.Message, keepMessages int) compactionPlan {
 	spans := internalcompact.BuildMessageSpans(messages)
 	retainedStart := internalcompact.RetainedStartForKeepRecentMessages(spans, keepMessages)
 	if retainedStart <= 0 {
@@ -57,7 +57,7 @@ func planKeepRecent(messages []provider.Message, keepMessages int) compactionPla
 }
 
 // planFullReplace 计算 full_replace 策略下需要摘要与保留的消息集合。
-func planFullReplace(messages []provider.Message) compactionPlan {
+func planFullReplace(messages []providertypes.Message) compactionPlan {
 	if len(messages) == 0 {
 		return compactionPlan{}
 	}
@@ -78,7 +78,7 @@ func planFullReplace(messages []provider.Message) compactionPlan {
 }
 
 // splitMessagesAt 按 retained 起点切分 archived 与 retained，并返回深拷贝结果。
-func splitMessagesAt(messages []provider.Message, retainedStart int) ([]provider.Message, []provider.Message) {
+func splitMessagesAt(messages []providertypes.Message, retainedStart int) ([]providertypes.Message, []providertypes.Message) {
 	if retainedStart <= 0 {
 		return nil, cloneMessages(messages)
 	}

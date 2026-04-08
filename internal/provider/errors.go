@@ -10,6 +10,11 @@ import (
 var (
 	ErrDriverNotFound          = errors.New("provider driver not found")
 	ErrDriverAlreadyRegistered = errors.New("provider: driver already registered")
+
+	// 流级哨兵错误，用于区分可恢复/不可恢复的流中断原因。
+	ErrStreamInterrupted = errors.New("provider: stream interrupted")
+	ErrLineTooLong       = errors.New("provider: SSE line exceeds max length")
+	ErrStreamTooLarge    = errors.New("provider: stream total size exceeds limit")
 )
 
 type ProviderErrorCode string

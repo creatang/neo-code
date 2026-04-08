@@ -70,6 +70,7 @@ type CompactConfig struct {
 	ManualStrategy           string `yaml:"manual_strategy,omitempty"`
 	ManualKeepRecentMessages int    `yaml:"manual_keep_recent_messages,omitempty"`
 	MaxSummaryChars          int    `yaml:"max_summary_chars,omitempty"`
+	MicroCompactDisabled     bool   `yaml:"micro_compact_disabled,omitempty"`
 }
 
 type WebFetchConfig struct {
