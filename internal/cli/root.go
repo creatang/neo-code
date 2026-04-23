@@ -85,6 +85,7 @@ func NewRootCommand() *cobra.Command {
 	_ = settings.BindPFlag("workdir", cmd.PersistentFlags().Lookup("workdir"))
 	cmd.AddCommand(
 		newGatewayCommand(),
+		newFeishuAdapterCommand(),
 		newMigrateCommand(),
 		newURLDispatchCommand(),
 		newUpdateCommand(),
